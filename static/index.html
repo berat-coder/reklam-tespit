@@ -504,6 +504,17 @@ async function loadHome() {
         <i class="ti ti-plus"></i> Kanal Ekle
       </button>
     </div>
+
+    <div class="section" style="margin-bottom:20px">
+      <div class="section-head"><div class="section-title-lg">Manuel Video Analizi</div></div>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="manualUrlInput" placeholder="https://www.youtube.com/watch?v=..."
+          style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+          padding:10px 14px;border-radius:8px;font-size:13px;font-family:monospace"
+          onkeypress="if(event.key==='Enter') analyzeManualUrl()">
+        <button class="btn primary" onclick="analyzeManualUrl()">▶ Analiz Et</button>
+      </div>
+    </div>
   `;
 
   // Aggregate stats
@@ -551,6 +562,21 @@ async function loadHome() {
   }
 
   $('main').innerHTML = html;
+}
+
+async function analyzeManualUrl() {
+  const input = document.getElementById('manualUrlInput');
+  const url = (input ? input.value : '').trim();
+  if (!url) { alert('URL girin'); return; }
+  if (!url.includes('youtu')) { alert('Geçerli YouTube URL\'si girin'); return; }
+  const r = await fetch('/api/analyze/video', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url})
+  });
+  const d = await r.json();
+  if (d.error) { alert('Hata: ' + d.error); return; }
+  if (input) input.value = '';
+  goLive(null);
 }
 
 async function addChannelPrompt() {
