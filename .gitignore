@@ -1,0 +1,24 @@
+# Ortam
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Veri
+data.db
+data.json
+frames/
+config.json
+
+# Çerezler (hassas)
+cookies.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Heroku
+.heroku/

@@ -1,6 +1,9 @@
-flask
-yt-dlp
-opencv-python-headless
-numpy
-requests
-gunicorn
+flask==3.0.3
+yt-dlp==2024.8.6
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+requests==2.32.3
+gunicorn==22.0.0
+redis==5.0.8
+rq==1.16.2
+python-dotenv==1.0.1
