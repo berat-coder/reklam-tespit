@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 
 from config import load_config, save_config
-from services.youtube import fetch_channel_videos, channel_id_from_url
+from services.youtube import fetch_channel_videos, channel_id_from_url, has_cookies
 from services.job_manager import JOB_MANAGER
 from models.database import (
     get_channel, get_channel_videos, get_video, get_detections,
@@ -245,6 +245,14 @@ def analyze_single_video():
     url = data.get("url", "").strip()
     if not url:
         return jsonify({"error": "URL gerekli"}), 400
+    if "youtube.com" not in url and "youtu.be" not in url:
+        return jsonify({"error": "Geçerli bir YouTube URL'si girin"}), 400
+    if not has_cookies():
+        return jsonify({
+            "error": "YouTube cookie bulunamadı. Railway'de YOUTUBE_COOKIES "
+                     "env var'ını ayarlaman gerekiyor.",
+            "cookie_missing": True,
+        }), 503
     job_id = JOB_MANAGER.add_video(url, priority=True)
     return jsonify({"ok": True, "job_id": job_id})
 

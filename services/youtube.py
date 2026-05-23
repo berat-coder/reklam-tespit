@@ -1,32 +1,44 @@
 import os
 import re
 import tempfile
+import requests as _requests
 from config import BASE_DIR
 from yt_dlp import YoutubeDL
 
-# Railway'e YOUTUBE_COOKIES env var olarak cookies.txt içeriği yapıştırılabilir
 _COOKIE_TMPFILE = None
 
 
 def _cookie_file_path():
-    """cookies.txt dosya yolunu döndürür. Dosya yoksa env var'dan yazar."""
     global _COOKIE_TMPFILE
     local = BASE_DIR / "cookies.txt"
     if local.exists():
         return str(local)
-    cookie_content = os.environ.get("YOUTUBE_COOKIES", "")
-    if cookie_content:
+    content = os.environ.get("YOUTUBE_COOKIES", "")
+    if content:
         if _COOKIE_TMPFILE is None:
             tf = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
-            tf.write(cookie_content)
+            tf.write(content)
             tf.close()
             _COOKIE_TMPFILE = tf.name
         return _COOKIE_TMPFILE
     return None
 
 
+def has_cookies():
+    return _cookie_file_path() is not None
+
+
 def get_ydl_opts(extra=None):
-    opts = {"quiet": True, "no_warnings": True}
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        # Android client'ı önce dene — data center IP'lerinde daha az bloklanır
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+    }
     cp = _cookie_file_path()
     if cp:
         opts["cookiefile"] = cp
@@ -48,7 +60,7 @@ def channel_id_from_url(url):
 
 def fetch_channel_videos(channel_url, last_hours=24):
     base_url = channel_url.rstrip("/")
-    for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community"):
+    for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community", "/live"):
         if base_url.endswith(suffix):
             base_url = base_url[: -len(suffix)]
             break
@@ -58,9 +70,10 @@ def fetch_channel_videos(channel_url, last_hours=24):
     channel_id_meta = ""
 
     tries = [
-        (base_url + "/videos", "videos"),
+        (base_url + "/videos",  "videos"),
         (base_url + "/streams", "streams"),
-        (base_url, "main"),
+        (base_url + "/live",    "live"),    # canlı yayın varsa yakala
+        (base_url,              "main"),
     ]
 
     for try_url, tab in tries:
@@ -69,12 +82,14 @@ def fetch_channel_videos(channel_url, last_hours=24):
             with YoutubeDL(get_ydl_opts({
                 "extract_flat": "in_playlist",
                 "skip_download": True,
-                "playlistend": 20,   # 50→20: daha hızlı, timeout riski düşük
+                "playlistend": 20,
                 "ignoreerrors": True,
-                "socket_timeout": 15,  # 30→15: erken vazgeç
+                "socket_timeout": 15,
             })) as ydl:
                 info = ydl.extract_info(try_url, download=False)
+
             if not info:
+                print(f"[KANAL] {try_url} → boş")
                 continue
 
             if not channel_name:
@@ -85,6 +100,26 @@ def fetch_channel_videos(channel_url, last_hours=24):
                 )
             if not channel_id_meta:
                 channel_id_meta = info.get("channel_id") or info.get("uploader_id", "")
+
+            # /live tek video dönebilir (playlist değil)
+            if tab == "live" and info.get("id") and info.get("_type") != "playlist":
+                eid = info["id"]
+                if eid not in all_entries:
+                    all_entries[eid] = {
+                        "id": eid,
+                        "url": info.get("webpage_url") or f"https://www.youtube.com/watch?v={eid}",
+                        "title": info.get("title", "🔴 Canlı Yayın"),
+                        "duration": 0,
+                        "thumbnail": (
+                            info.get("thumbnail")
+                            or f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg"
+                        ),
+                        "view_count": info.get("view_count", 0) or 0,
+                        "tab": "live",
+                        "is_live": True,
+                    }
+                print(f"[KANAL] {try_url} → canlı yayın bulundu: {eid}")
+                continue
 
             entries = info.get("entries", []) or []
             flat_entries = []
@@ -103,8 +138,10 @@ def fetch_channel_videos(channel_url, last_hours=24):
                 eid = entry.get("id")
                 if not eid or eid in all_entries:
                     continue
-                if entry.get("_type") not in (None, "url", "video"):
+                # video / url / url_transparent / None → hepsini al (canlı yayın dahil)
+                if entry.get("_type") not in (None, "url", "video", "url_transparent"):
                     continue
+                is_live = bool(entry.get("is_live") or entry.get("was_live"))
                 all_entries[eid] = {
                     "id": eid,
                     "url": entry.get("url") or f"https://www.youtube.com/watch?v={eid}",
@@ -116,18 +153,25 @@ def fetch_channel_videos(channel_url, last_hours=24):
                     ),
                     "view_count": entry.get("view_count", 0) or 0,
                     "tab": tab,
+                    "is_live": is_live,
                 }
                 count += 1
             print(f"[KANAL] {try_url} → {count} yeni video (toplam: {len(all_entries)})")
 
             if len(all_entries) >= 15 and tab == "videos":
                 continue
+
         except Exception as e:
-            print(f"[KANAL] {try_url} → HATA: {e}")
+            err = str(e)
+            if "Please sign in" in err or "Sign in" in err:
+                print(f"[KANAL] {try_url} → YouTube cookie istedi. "
+                      f"YOUTUBE_COOKIES env var'ını Railway'e ekle.")
+            else:
+                print(f"[KANAL] {try_url} → HATA: {err}")
             continue
 
     videos_list = list(all_entries.values())
-    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video")
+    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın")
     return {
         "channel_name": channel_name or channel_id_from_url(channel_url),
         "channel_id": channel_id_meta,

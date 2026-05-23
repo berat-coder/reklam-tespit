@@ -172,7 +172,12 @@ def _analyze_video_core(
         with YoutubeDL(get_ydl_opts({"skip_download": True, "noplaylist": True})) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
-        status(f"Meta hatası: {e}")
+        err = str(e)
+        if "Please sign in" in err or "Sign in" in err:
+            status("YouTube cookie gerekiyor — Railway'de YOUTUBE_COOKIES env var'ını ayarla")
+        else:
+            status(f"Meta hatası: {err}")
+        on_set_live(status="error", message=err, progress=0)
         return
 
     video_id = info.get("id")
@@ -215,7 +220,8 @@ def _analyze_video_core(
     try:
         with YoutubeDL(get_ydl_opts({
             "skip_download": True, "noplaylist": True,
-            "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+            # HLS canlı yayın dahil tüm formatları kapsar
+            "format": "best[height<=720]/best[ext=mp4][height<=720]/best",
         })) as ydl:
             si = ydl.extract_info(url, download=False)
         stream_url = si.get("url")
