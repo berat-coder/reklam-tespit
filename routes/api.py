@@ -142,10 +142,27 @@ def channel_browse(ch_id=None):
     if not channel_url:
         return jsonify({"error": "Kanal bulunamadı"}), 404
 
-    try:
-        res = fetch_channel_videos(channel_url)
-    except Exception as e:
-        return jsonify({"error": f"Kanal taranamadı: {e}"}), 500
+    # fetch_channel_videos bloklar — thread'de çalıştır, 90s timeout
+    import threading
+    result_box = [None]
+    error_box = [None]
+
+    def _fetch():
+        try:
+            result_box[0] = fetch_channel_videos(channel_url)
+        except Exception as e:
+            error_box[0] = str(e)
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+    t.join(timeout=90)
+
+    if t.is_alive():
+        return jsonify({"error": "YouTube zaman aşımı — birazdan tekrar dene"}), 504
+    if error_box[0]:
+        return jsonify({"error": f"Kanal taranamadı: {error_box[0]}"}), 500
+
+    res = result_box[0]
 
     analyzed_ids = {v["id"] for v in get_channel_videos(ch_id)}
     qs = JOB_MANAGER.queue_status()

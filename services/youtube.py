@@ -1,13 +1,35 @@
+import os
 import re
+import tempfile
 from config import BASE_DIR
 from yt_dlp import YoutubeDL
+
+# Railway'e YOUTUBE_COOKIES env var olarak cookies.txt içeriği yapıştırılabilir
+_COOKIE_TMPFILE = None
+
+
+def _cookie_file_path():
+    """cookies.txt dosya yolunu döndürür. Dosya yoksa env var'dan yazar."""
+    global _COOKIE_TMPFILE
+    local = BASE_DIR / "cookies.txt"
+    if local.exists():
+        return str(local)
+    cookie_content = os.environ.get("YOUTUBE_COOKIES", "")
+    if cookie_content:
+        if _COOKIE_TMPFILE is None:
+            tf = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+            tf.write(cookie_content)
+            tf.close()
+            _COOKIE_TMPFILE = tf.name
+        return _COOKIE_TMPFILE
+    return None
 
 
 def get_ydl_opts(extra=None):
     opts = {"quiet": True, "no_warnings": True}
-    cookie_file = BASE_DIR / "cookies.txt"
-    if cookie_file.exists():
-        opts["cookiefile"] = str(cookie_file)
+    cp = _cookie_file_path()
+    if cp:
+        opts["cookiefile"] = cp
     if extra:
         opts.update(extra)
     return opts
@@ -47,9 +69,9 @@ def fetch_channel_videos(channel_url, last_hours=24):
             with YoutubeDL(get_ydl_opts({
                 "extract_flat": "in_playlist",
                 "skip_download": True,
-                "playlistend": 50,
+                "playlistend": 20,   # 50→20: daha hızlı, timeout riski düşük
                 "ignoreerrors": True,
-                "socket_timeout": 30,
+                "socket_timeout": 15,  # 30→15: erken vazgeç
             })) as ydl:
                 info = ydl.extract_info(try_url, download=False)
             if not info:
