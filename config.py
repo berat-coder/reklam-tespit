@@ -33,7 +33,12 @@ _CONFIG_FILE = BASE_DIR / "config.json"
 
 
 def load_config():
-    cfg = {"gemini_api_key": "", "channels": list(DEFAULT_CHANNELS)}
+    # Önce env var'ı taban olarak al
+    cfg = {
+        "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
+        "channels": list(DEFAULT_CHANNELS),
+    }
+    # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır
     if _CONFIG_FILE.exists():
         try:
             saved = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
@@ -43,9 +48,6 @@ def load_config():
                 cfg["channels"] = saved["channels"]
         except Exception:
             pass
-    env_key = os.environ.get("GEMINI_API_KEY", "")
-    if env_key:
-        cfg["gemini_api_key"] = env_key
     return cfg
 
 
