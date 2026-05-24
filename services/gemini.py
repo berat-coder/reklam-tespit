@@ -5,7 +5,7 @@ import requests
 from config import GEMINI_URL
 
 
-def gemini_call(api_key, payload, max_attempts=3):
+def gemini_call(api_key, payload, max_attempts=4):
     for attempt in range(max_attempts):
         try:
             r = requests.post(
@@ -14,10 +14,11 @@ def gemini_call(api_key, payload, max_attempts=3):
             if r.status_code == 200:
                 return r.json(), None
             if r.status_code == 429:
-                time.sleep(30)
+                wait = 30 * (attempt + 1)   # 30 → 60 → 90 → 120 s
+                time.sleep(wait)
                 continue
             if r.status_code in (500, 502, 503, 504):
-                time.sleep(10)
+                time.sleep(10 * (attempt + 1))
                 continue
             return None, f"API hata {r.status_code}: {r.text[:120]}"
         except Exception as e:
@@ -76,24 +77,26 @@ def gemini_analyze_frame(api_key, image_b64, channel_logos, known_brands, timest
 
 GÖREV: Bu görüntüde HARİCİ REKLAM, SPONSOR veya MARKA YERLEŞTİRME var mı?
 
-✅ REKLAM SAYILAN:
-- Alt bant'ta marka logosu/sloganı
-- Köşelerde harici marka logosu (kanalın kendi logosu DEĞİL)
-- Sponsor bandı, kampanya yazısı, indirim kodu
-- URL, "kod ile indirimli", "tıkla", "satın al"
-- Bahis, oyun, bonus, hoşgeldin paketi
-- Konuşmacının kasıtlı tuttuğu marka/ürün
-- Arka plan reklam panoları
+✅ REKLAM SAYILAN (bunlardan HERHANGİ BİRİ varsa reklam_var=true):
+- YouTube pre-roll / mid-roll reklam ekranı (tam ekran reklam, atla butonu, sayaç)
+- Reklam geçiş karesi (siyah, kırmızı, beyaz vs düz renk ekran — reklam arası)
+- Görüntünün herhangi bir köşesinde / kenarında reklam overlay'i, banner
+- Alt bant'ta marka logosu/sloganı/kampanya yazısı
+- Sponsor bandı, indirim kodu, "tıkla"/"satın al"/"kod ile indirim" yazıları
+- Bahis, oyun, bonus, hoşgeldin paketi reklamları
+- Konuşmacının elinde/yanında kasıtlı tuttuğu markalı ürün
+- Arka plan reklam panoları veya logo
 
 🚫 REKLAM SAYMA:
-- Kanalın kendi logosu (yukarıda listelenenler)
-- Program adı bandı
-- Konuşmacı/misafir isim tagları
-- Sosyal medya hesabı tagleri
+- Kanalın kendi logosu (kanal logosu listesinde olanlar: {', '.join(channel_logos[:6]) if channel_logos else 'yok'})
+- Program/yayın adı bandı
+- Konuşmacı/misafir isim tagi
+- Sosyal medya hesabı tagi
 
-🔥 ÇOK ÖNEMLİ:
-- Markayı NET okuyabiliyorsan YAZ. EMİN değilsen boş bırak, UYDURMA!
-- Tespit kategorisi NET olsun: "Alt Bant", "Köşe Logo", "Sponsor Bandı", "Ürün Yerleştirme", "Arka Plan", "Banner"
+🔥 KRİTİK:
+- Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et
+- Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
+- Kategori: "Pre-Roll", "Mid-Roll", "Alt Bant", "Köşe Banner", "Sponsor Bandı", "Ürün Yerleştirme", "Geçiş Karesi", "Arka Plan"
 
 YANIT — SADECE JSON:
 {{
@@ -101,9 +104,9 @@ YANIT — SADECE JSON:
   "guven": "Yüksek/Orta/Düşük",
   "markalar": ["NET marka adları, kanal logosu hariç"],
   "tespitler": [
-    {{"tur": "Alt Bant|Köşe Logo|Sponsor Bandı|Ürün Yerleştirme|Banner|Arka Plan",
-      "konum": "sağ üst|sol üst|sağ alt|sol alt|alt orta|üst orta|merkez",
-      "marka": "marka", "detay": "kısa"}}
+    {{"tur": "Pre-Roll|Mid-Roll|Alt Bant|Köşe Banner|Sponsor Bandı|Ürün Yerleştirme|Geçiş Karesi|Arka Plan",
+      "konum": "sağ üst|sol üst|sağ alt|sol alt|alt orta|üst orta|merkez|tam ekran",
+      "marka": "marka adı", "detay": "kısa açıklama"}}
   ],
   "ozet": "tek cümle"
 }}"""

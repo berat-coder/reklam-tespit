@@ -313,9 +313,11 @@ def _analyze_video_core(
         cv2.imwrite(str(job_frames_dir / frame_filename), frame,
                     [cv2.IMWRITE_JPEG_QUALITY, 78])
 
+        # Skip API if frame is nearly identical AND last result was a clean API call
+        last_reliable = last_result is not None and not last_result.get("_skipped")
         skip_api = (
             last_frame is not None
-            and last_result is not None
+            and last_reliable
             and _frame_diff(last_frame, frame) < 0.03
             and _lower_diff(last_frame, frame) < 0.04
         )
@@ -335,26 +337,30 @@ def _analyze_video_core(
             b64 = base64.b64encode(buf.tobytes()).decode()
             result = gemini_analyze_frame(api_key, b64, channel_logos, desc_brands, ts_str)
             api_calls += 1
-            last_result = result
-            time.sleep(2)
+            # Only update last_result if the call succeeded (not rate-limited)
+            if not result.get("_skipped"):
+                last_result = result
+            time.sleep(8)   # gemini-2.5-flash free tier: 10 RPM → ≥6s between calls
 
         last_frame = frame
 
-        # Akıllı tekrar süzme — aynı (marka+tür) ikiden fazla görünmesin
+        # Duplicate suppression — same brand+type capped at 3 appearances
         filtered = []
         for t in result.get("tespitler", []):
             norm = _normalize_brand(t.get("marka", "")) + "|" + (t.get("tur", "") or "")
             appearances = ad_appearances.get(norm, [])
-            if len(appearances) < 2:
+            if len(appearances) < 3:
                 filtered.append(t)
                 ad_appearances.setdefault(norm, []).append(analyzed)
 
+        # reklam_var = True if Gemini said so — don't require filtered detections
+        # (Gemini may set reklam_var=true even with empty tespitler list)
         detection = {
             "index": analyzed,
             "timestamp": ts_str,
             "seconds": round(ts, 1),
             "frame_url": f"/frames/{video_id}/{frame_filename}",
-            "reklam_var": result.get("reklam_var", False) and len(filtered) > 0,
+            "reklam_var": result.get("reklam_var", False),
             "guven": result.get("guven", "Düşük"),
             "markalar": result.get("markalar", []),
             "tespitler": filtered,
