@@ -85,6 +85,8 @@ def fetch_channel_videos(channel_url, last_hours=24):
                 "playlistend": 20,
                 "ignoreerrors": True,
                 "socket_timeout": 15,
+                # Kanal listesi için web client daha güvenilir
+                "extractor_args": {"youtube": {"player_client": ["web"]}},
             })) as ydl:
                 info = ydl.extract_info(try_url, download=False)
 
