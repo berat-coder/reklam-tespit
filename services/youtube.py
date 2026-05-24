@@ -29,16 +29,7 @@ def has_cookies():
 
 
 def get_ydl_opts(extra=None):
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        # Android client'ı önce dene — data center IP'lerinde daha az bloklanır
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-            }
-        },
-    }
+    opts = {"quiet": True, "no_warnings": True}
     cp = _cookie_file_path()
     if cp:
         opts["cookiefile"] = cp

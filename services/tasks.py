@@ -215,27 +215,35 @@ def _analyze_video_core(
     on_set_live(desc_brands=desc_brands, channel_logos=channel_logos,
                 message="Stream URL alınıyor...")
 
-    # 3. Stream URL
+    # 3. Stream URL — format yoksa formatorsuz tekrar dene
     status(f"Stream alınıyor: {title[:40]}")
-    try:
-        with YoutubeDL(get_ydl_opts({
-            "skip_download": True, "noplaylist": True,
-            # HLS canlı yayın dahil tüm formatları kapsar
-            "format": "best[height<=720]/best[ext=mp4][height<=720]/best",
-        })) as ydl:
-            si = ydl.extract_info(url, download=False)
-        stream_url = si.get("url")
-        if not stream_url:
-            for f in reversed(si.get("formats", [])):
-                if f.get("url") and f.get("vcodec") not in (None, "none"):
-                    stream_url = f["url"]
-                    break
-    except Exception as e:
-        status(f"Stream hatası: {e}")
-        return
+    stream_url = None
+    for fmt_opts in [
+        {"format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best"},
+        {},  # format belirtme, yt-dlp varsayılan seçsin
+    ]:
+        try:
+            with YoutubeDL(get_ydl_opts({
+                "skip_download": True, "noplaylist": True, **fmt_opts
+            })) as ydl:
+                si = ydl.extract_info(url, download=False)
+            stream_url = si.get("url")
+            if not stream_url:
+                for f in reversed(si.get("formats", [])):
+                    if f.get("url") and f.get("vcodec") not in (None, "none"):
+                        stream_url = f["url"]
+                        break
+            if stream_url:
+                break
+        except Exception as e:
+            if "format" in fmt_opts:
+                status(f"Format denemesi başarısız, varsayılan deneniyor: {e}")
+                continue
+            status(f"Stream hatası: {e}")
+            return
 
     if not stream_url:
-        status("Stream URL yok")
+        status("Stream URL bulunamadı")
         return
 
     # 4. Frame analizi
