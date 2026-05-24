@@ -83,6 +83,7 @@ def _do_channel_scan(channel_url, last_hours, job_manager):
 
     upsert_channel(
         channel_id, name=channel_name, url=channel_url,
+        avatar_url=res.get("channel_avatar", ""),
         last_scanned=datetime.utcnow().isoformat()
     )
 
@@ -204,9 +205,11 @@ def _analyze_video_core(
     if not channel_name:
         channel_name = info.get("channel", "")
 
+    from services.youtube import _pick_channel_avatar
     avatar_url = (
         info.get("channel_thumbnail") or
         info.get("uploader_thumbnail") or
+        _pick_channel_avatar(info.get("thumbnails") or []) or
         ""
     )
 

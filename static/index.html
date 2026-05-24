@@ -856,12 +856,14 @@ async function analyzeVideoFromBrowse(videoUrl, channelId, btnEl) {
 let livePollInterval = null;
 let _liveBuilt = false;
 let _liveLastDetCount = -1;
+let _liveWaitCount = 0;   // how many polls with no active video before giving up
 
 function goLive(channelId) {
   state.page = 'live';
   state.channelId = channelId;
   _liveBuilt = false;
   _liveLastDetCount = -1;
+  _liveWaitCount = 0;
   $('navHome').classList.remove('active');
   startLivePolling();
 }
@@ -875,6 +877,7 @@ function stopLivePolling() {
 
 function startLivePolling() {
   stopLivePolling();
+  _liveWaitCount = 0;
   renderLiveLoading();
   pollLive();
   livePollInterval = setInterval(pollLive, 2000);
@@ -883,6 +886,7 @@ function startLivePolling() {
 function renderLiveLoading() {
   _liveBuilt = false;
   _liveLastDetCount = -1;
+  _liveWaitCount = 0;
   $('main').innerHTML = `
     <div class="page-header">
       <div>
@@ -892,12 +896,12 @@ function renderLiveLoading() {
           </span>
         </div>
         <h1>Canlı Analiz</h1>
-        <div class="subtitle">Video bilgileri alınıyor...</div>
+        <div class="subtitle">Video sıraya alındı, başlaması bekleniyor...</div>
       </div>
     </div>
     <div class="empty-card">
       <i class="ti ti-loader-2" style="font-size:32px;display:block;margin-bottom:8px;opacity:0.5"></i>
-      Hazırlanıyor...
+      Worker video açmayı bekliyor...
     </div>
   `;
 }
@@ -915,20 +919,34 @@ async function pollLive() {
     const r = await fetch('/api/live-video');
     const d = await r.json();
     if (!d.active) {
-      renderLiveEmpty();
+      if (_liveBuilt) {
+        // Video was running and just finished — update in place, no innerHTML replace
+        if ($('lv-badge')) $('lv-badge').innerHTML = '<span class="video-ad-badge zero" style="margin-left:8px">✓ Tamamlandı</span>';
+        if ($('lv-subtitle')) $('lv-subtitle').textContent = 'Analiz tamamlandı';
+        stopLivePolling();
+        loadRecentSidebar();
+      } else {
+        _liveWaitCount++;
+        // After 25 polls (50s) with no video, assume something is wrong
+        if (_liveWaitCount > 25) {
+          _showLiveNoVideo();
+        }
+        // else: keep showing loading screen — job is in queue, not yet started
+      }
       return;
     }
+    _liveWaitCount = 0;
     renderLive(d);
     if (d.status === 'completed') {
       setTimeout(() => {
         stopLivePolling();
         loadRecentSidebar();
-      }, 1500);
+      }, 2000);
     }
   } catch (e) {}
 }
 
-function renderLiveEmpty() {
+function _showLiveNoVideo() {
   if (state.page !== 'live') return;
   _liveBuilt = false;
   $('main').innerHTML = `

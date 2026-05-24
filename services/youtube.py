@@ -49,6 +49,22 @@ def channel_id_from_url(url):
     return url.split("/")[-1]
 
 
+def _pick_channel_avatar(thumbnails):
+    """Return the best avatar URL from a yt-dlp thumbnails list."""
+    if not thumbnails:
+        return ""
+    # prefer entries explicitly tagged as avatar
+    for t in thumbnails:
+        if "avatar" in (t.get("id") or "").lower() and t.get("url"):
+            return t["url"]
+    # fallback: smallest square-ish thumbnail (avatar is usually ≤ 176px)
+    small = [t for t in thumbnails if t.get("url") and t.get("height", 9999) <= 176]
+    if small:
+        small.sort(key=lambda x: x.get("height", 0))
+        return small[-1]["url"]  # largest of the small ones → best quality
+    return ""
+
+
 def fetch_channel_videos(channel_url, last_hours=24):
     base_url = channel_url.rstrip("/")
     for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community", "/live"):
@@ -59,6 +75,7 @@ def fetch_channel_videos(channel_url, last_hours=24):
     all_entries = {}
     channel_name = ""
     channel_id_meta = ""
+    channel_avatar = ""
 
     tries = [
         (base_url + "/videos",  "videos"),
@@ -93,6 +110,8 @@ def fetch_channel_videos(channel_url, last_hours=24):
                 )
             if not channel_id_meta:
                 channel_id_meta = info.get("channel_id") or info.get("uploader_id", "")
+            if not channel_avatar:
+                channel_avatar = _pick_channel_avatar(info.get("thumbnails") or [])
 
             # /live tek video dönebilir (playlist değil)
             if tab == "live" and info.get("id") and info.get("_type") != "playlist":
@@ -164,9 +183,10 @@ def fetch_channel_videos(channel_url, last_hours=24):
             continue
 
     videos_list = list(all_entries.values())
-    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın")
+    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın (avatar: {'evet' if channel_avatar else 'yok'})")
     return {
         "channel_name": channel_name or channel_id_from_url(channel_url),
         "channel_id": channel_id_meta,
         "videos": videos_list,
+        "channel_avatar": channel_avatar,
     }
