@@ -4,7 +4,7 @@ from config import load_config, save_config
 from services.youtube import fetch_channel_videos, channel_id_from_url, has_cookies
 from services.job_manager import JOB_MANAGER
 from models.database import (
-    get_channel, get_channel_videos, get_video, get_detections,
+    get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
 )
 
 api_bp = Blueprint("api", __name__)
@@ -57,6 +57,7 @@ def list_channels():
             "video_count": len(videos),
             "total_ads": total_ads,
             "channel_logos": ch.get("channel_logos", []),
+            "avatar_url": ch.get("avatar_url", ""),
             "top_brands": [{"name": b, "count": c} for b, c in top_brands],
             "last_scanned": ch.get("last_scanned"),
         })
@@ -276,3 +277,9 @@ def queue_status():
 def cancel_queue():
     JOB_MANAGER.cancel_all()
     return jsonify({"ok": True})
+
+
+@api_bp.route("/api/recent-videos")
+def recent_videos_endpoint():
+    videos = get_recent_videos(10)
+    return jsonify({"videos": videos})

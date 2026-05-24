@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS channels (
     name         TEXT NOT NULL DEFAULT '',
     url          TEXT NOT NULL DEFAULT '',
     channel_logos TEXT NOT NULL DEFAULT '[]',
+    avatar_url   TEXT NOT NULL DEFAULT '',
     last_scanned TEXT
 );
 
@@ -69,6 +70,10 @@ def get_db():
 def init_db():
     with get_db() as conn:
         conn.executescript(_SCHEMA)
+        try:
+            conn.execute("ALTER TABLE channels ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
 
 
 # ── Kanal ─────────────────────────────────────────────────────────────────────
@@ -79,18 +84,19 @@ def get_channel(ch_id):
         return _ch(row) if row else None
 
 
-def upsert_channel(ch_id, name="", url="", channel_logos=None, last_scanned=None):
+def upsert_channel(ch_id, name="", url="", channel_logos=None, avatar_url="", last_scanned=None):
     logos = json.dumps(channel_logos or [], ensure_ascii=False)
     with get_db() as conn:
         conn.execute("""
-            INSERT INTO channels (id, name, url, channel_logos, last_scanned)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO channels (id, name, url, channel_logos, avatar_url, last_scanned)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name         = COALESCE(NULLIF(excluded.name, ''), channels.name),
                 url          = COALESCE(NULLIF(excluded.url, ''),  channels.url),
                 channel_logos = excluded.channel_logos,
+                avatar_url   = COALESCE(NULLIF(excluded.avatar_url, ''), channels.avatar_url),
                 last_scanned = COALESCE(excluded.last_scanned, channels.last_scanned)
-        """, (ch_id, name, url, logos, last_scanned))
+        """, (ch_id, name, url, logos, avatar_url, last_scanned))
 
 
 def update_channel_logos(ch_id, logos):
@@ -198,15 +204,31 @@ def get_detections(video_id):
         return [_det(r) for r in rows]
 
 
+def get_recent_videos(limit=10):
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT v.id, v.title, v.thumbnail, v.ad_frame_count, v.analyzed_at,
+                   v.channel_id, c.name AS channel_name, c.avatar_url
+            FROM videos v
+            LEFT JOIN channels c ON c.id = v.channel_id
+            WHERE v.completed = 1
+            ORDER BY v.analyzed_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+
 # ── Row → dict dönüştürücüler ─────────────────────────────────────────────────
 
 def _ch(row):
+    d = dict(row)
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "url": row["url"],
-        "channel_logos": json.loads(row["channel_logos"] or "[]"),
-        "last_scanned": row["last_scanned"],
+        "id": d["id"],
+        "name": d["name"],
+        "url": d["url"],
+        "channel_logos": json.loads(d.get("channel_logos") or "[]"),
+        "avatar_url": d.get("avatar_url", ""),
+        "last_scanned": d.get("last_scanned"),
     }
 
 

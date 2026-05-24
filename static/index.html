@@ -308,6 +308,26 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .brand-bar-fill { height: 100%; background: var(--accent); }
 .brand-bar-count { width: 32px; text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
 
+/* Recent sidebar items */
+.recent-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border-radius: 6px; cursor: pointer;
+}
+.recent-item:hover { background: var(--bg3); }
+.recent-thumb {
+  width: 40px; height: 23px; border-radius: 3px; object-fit: cover;
+  background: var(--bg3); flex-shrink: 0;
+}
+.recent-info { flex: 1; min-width: 0; }
+.recent-title { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-ch { font-size: 10px; color: var(--dimmer); margin-top: 1px; }
+.recent-ads { font-size: 10px; color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+
+/* Channel avatar image */
+.cc-avatar-img {
+  width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+}
+
 @media (max-width: 800px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { height: auto; position: relative; }
@@ -379,6 +399,13 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
       </div>
     </div>
 
+    <div id="recentSidebarSection">
+      <div class="section-title">Son Analizler</div>
+      <div id="recentList" style="display:flex;flex-direction:column;gap:2px">
+        <div style="font-size:10px;color:var(--dimmer);padding:4px 8px">Yükleniyor...</div>
+      </div>
+    </div>
+
     <div style="font-size:10px;color:var(--dimmer);text-align:center;padding-top:10px;border-top:1px solid var(--border)">
       ~$0.005 / frame
     </div>
@@ -405,6 +432,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   await refreshKey();
   goHome();
   pollQueue();
+  loadRecentSidebar();
+  setInterval(loadRecentSidebar, 30000);
 });
 
 // ─── Key ───
@@ -479,6 +508,7 @@ function goHome() {
   state.videoId = null;
   $('navHome').classList.add('active');
   loadHome();
+  loadRecentSidebar();
 }
 
 async function loadHome() {
@@ -541,10 +571,13 @@ async function loadHome() {
       const topBrandsHtml = (ch.top_brands || []).slice(0, 4).map(b =>
         `<span class="brand-pill ${b.count > 3 ? 'hot' : ''}">${esc(b.name)} ${b.count}</span>`
       ).join('') || '<span style="color:var(--dimmer);font-size:11px">Henüz veri yok</span>';
+      const avatarHtml = ch.avatar_url
+        ? `<img class="cc-avatar-img" src="${esc(ch.avatar_url)}" onerror="this.outerHTML='<div class=cc-avatar>${initial}</div>'">`
+        : `<div class="cc-avatar">${initial}</div>`;
 
       html += `<div class="channel-card" onclick="goChannel('${esc(ch.id)}')">
         <div class="cc-head">
-          <div class="cc-avatar">${initial}</div>
+          ${avatarHtml}
           <div>
             <div class="cc-name">${esc(ch.name || ch.id)}</div>
             <div class="cc-handle">${esc(ch.id)}</div>
@@ -821,10 +854,14 @@ async function analyzeVideoFromBrowse(videoUrl, channelId, btnEl) {
 
 // ─── Canlı Analiz İzleme ───
 let livePollInterval = null;
+let _liveBuilt = false;
+let _liveLastDetCount = -1;
 
 function goLive(channelId) {
   state.page = 'live';
   state.channelId = channelId;
+  _liveBuilt = false;
+  _liveLastDetCount = -1;
   $('navHome').classList.remove('active');
   startLivePolling();
 }
@@ -844,6 +881,8 @@ function startLivePolling() {
 }
 
 function renderLiveLoading() {
+  _liveBuilt = false;
+  _liveLastDetCount = -1;
   $('main').innerHTML = `
     <div class="page-header">
       <div>
@@ -865,6 +904,8 @@ function renderLiveLoading() {
 
 function exitLive() {
   stopLivePolling();
+  _liveBuilt = false;
+  loadRecentSidebar();
   if (state.channelId) goChannel(state.channelId);
   else goHome();
 }
@@ -874,22 +915,22 @@ async function pollLive() {
     const r = await fetch('/api/live-video');
     const d = await r.json();
     if (!d.active) {
-      // Belki bitti, son video sayfasına geç
       renderLiveEmpty();
       return;
     }
     renderLive(d);
     if (d.status === 'completed') {
-      // 2 saniye sonra dur ve geç
       setTimeout(() => {
         stopLivePolling();
-      }, 1000);
+        loadRecentSidebar();
+      }, 1500);
     }
   } catch (e) {}
 }
 
 function renderLiveEmpty() {
   if (state.page !== 'live') return;
+  _liveBuilt = false;
   $('main').innerHTML = `
     <div class="page-header">
       <div>
@@ -908,8 +949,64 @@ function renderLiveEmpty() {
   `;
 }
 
+function _buildLiveShell() {
+  $('main').innerHTML = `
+    <div class="page-header">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="btn sm" style="cursor:pointer" onclick="exitLive()">
+            <i class="ti ti-arrow-left"></i> Geri
+          </span>
+          <span id="lv-badge"></span>
+        </div>
+        <h1 id="lv-title" style="font-size:18px"></h1>
+        <div class="subtitle" id="lv-subtitle"></div>
+      </div>
+      <div id="lv-actions"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-lg">İlerleme</div>
+        <div style="font-size:13px;color:var(--dim)" id="lv-frame-count"></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden">
+        <div id="lv-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.5s"></div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:var(--dim);margin-top:4px;font-variant-numeric:tabular-nums" id="lv-pct"></div>
+    </div>
+
+    <div class="stat-tiles">
+      <div class="stat-tile"><div class="stat-tile-num" id="lv-s1">0</div><div class="stat-tile-lbl">Analiz Edilen</div></div>
+      <div class="stat-tile red"><div class="stat-tile-num" id="lv-s2">0</div><div class="stat-tile-lbl">Reklam</div></div>
+      <div class="stat-tile amber"><div class="stat-tile-num" id="lv-s3">0</div><div class="stat-tile-lbl">Yüksek Güven</div></div>
+      <div class="stat-tile blue"><div class="stat-tile-num" id="lv-s4">0</div><div class="stat-tile-lbl">API Çağrısı</div></div>
+    </div>
+
+    <div class="section" id="lv-tl-section" style="display:none">
+      <div class="section-head"><div class="section-title-lg">Canlı Zaman Çizelgesi</div></div>
+      <div class="tl-mini" id="lv-timeline"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-lg">Anlık Frame Akışı</div>
+        <div style="font-size:11px;color:var(--dim)">En yeni üstte</div>
+      </div>
+      <div id="lv-frames">
+        <div class="empty-card">Frame'ler analiz edildikçe burada görünecek...</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderLive(d) {
   if (state.page !== 'live') return;
+
+  if (!_liveBuilt) {
+    _buildLiveShell();
+    _liveBuilt = true;
+  }
 
   const dets = d.detections || [];
   const adFrames = dets.filter(x => x.reklam_var);
@@ -917,105 +1014,77 @@ function renderLive(d) {
   const total = d.total_steps || 1;
   const progress = d.progress || 0;
 
-  let statusBadge = '';
+  // Status badge
+  let badgeHtml = '';
   if (d.status === 'completed') {
-    statusBadge = '<span class="video-ad-badge zero" style="margin-left:8px">✓ Tamamlandı</span>';
+    badgeHtml = '<span class="video-ad-badge zero" style="margin-left:8px">✓ Tamamlandı</span>';
   } else if (d.status === 'analyzing') {
-    statusBadge = '<span class="video-ad-badge" style="background:rgba(255,170,34,0.15);color:var(--amber);margin-left:8px"><i class="ti ti-loader-2"></i> Canlı</span>';
+    badgeHtml = '<span class="video-ad-badge" style="background:rgba(255,170,34,0.15);color:var(--amber);margin-left:8px">● Canlı</span>';
   } else {
-    statusBadge = '<span class="video-ad-badge" style="background:rgba(90,140,255,0.15);color:var(--blue);margin-left:8px">Hazırlanıyor</span>';
+    badgeHtml = '<span class="video-ad-badge" style="background:rgba(90,140,255,0.15);color:var(--blue);margin-left:8px">Hazırlanıyor</span>';
   }
+  $('lv-badge').innerHTML = badgeHtml;
+  $('lv-title').textContent = d.title || 'Video';
+  $('lv-subtitle').textContent = (d.channel_name || '') + ' · ' + (d.message || '');
 
-  let html = `
-    <div class="page-header">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <span class="btn sm" style="cursor:pointer" onclick="exitLive()">
-            <i class="ti ti-arrow-left"></i> Geri
-          </span>
-          ${statusBadge}
-        </div>
-        <h1 style="font-size:18px">${esc(d.title || 'Video')}</h1>
-        <div class="subtitle">${esc(d.channel_name || '')} · ${esc(d.message || '')}</div>
-      </div>
-      <div>
-        <button class="btn" onclick="cancelQueue()" style="color:var(--red)">
-          <i class="ti ti-player-stop"></i> Durdur
-        </button>
-        ${d.status === 'completed' ? `<button class="btn primary" onclick="goVideo('${esc(d.video_id)}')" style="margin-left:6px"><i class="ti ti-eye"></i> Detay</button>` : ''}
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-head">
-        <div class="section-title-lg">İlerleme</div>
-        <div style="font-size:13px;color:var(--dim)">${d.current_frame || 0}/${total} frame · ${d.api_calls || 0} API çağrısı</div>
-      </div>
-      <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden">
-        <div style="background:var(--accent);height:100%;width:${progress}%;transition:width 0.3s"></div>
-      </div>
-      <div style="text-align:right;font-size:11px;color:var(--dim);margin-top:4px;font-variant-numeric:tabular-nums">
-        %${Math.round(progress)}
-      </div>
-    </div>
-
-    <div class="stat-tiles">
-      <div class="stat-tile"><div class="stat-tile-num">${dets.length}</div><div class="stat-tile-lbl">Analiz Edilen</div></div>
-      <div class="stat-tile red"><div class="stat-tile-num">${adFrames.length}</div><div class="stat-tile-lbl">Reklam</div></div>
-      <div class="stat-tile amber"><div class="stat-tile-num">${highFrames.length}</div><div class="stat-tile-lbl">Yüksek Güven</div></div>
-      <div class="stat-tile blue"><div class="stat-tile-num">${d.api_calls || 0}</div><div class="stat-tile-lbl">API Çağrısı</div></div>
-    </div>
+  $('lv-actions').innerHTML = `
+    <button class="btn" onclick="cancelQueue()" style="color:var(--red)">
+      <i class="ti ti-player-stop"></i> Durdur
+    </button>
+    ${d.status === 'completed' ? `<button class="btn primary" onclick="goVideo('${esc(d.video_id)}')" style="margin-left:6px"><i class="ti ti-eye"></i> Detay</button>` : ''}
   `;
 
-  // Timeline mini (canlı)
-  if (dets.length > 0) {
-    html += `<div class="section">
-      <div class="section-head"><div class="section-title-lg">Canlı Zaman Çizelgesi</div></div>
-      <div class="tl-mini">${dets.map(x => {
+  // Progress
+  $('lv-frame-count').textContent = `${d.current_frame || 0}/${total} frame · ${d.api_calls || 0} API çağrısı`;
+  $('lv-bar').style.width = progress + '%';
+  $('lv-pct').textContent = '%' + Math.round(progress);
+
+  // Stats
+  $('lv-s1').textContent = dets.length;
+  $('lv-s2').textContent = adFrames.length;
+  $('lv-s3').textContent = highFrames.length;
+  $('lv-s4').textContent = d.api_calls || 0;
+
+  // Timeline — only rebuild when dets change
+  if (dets.length !== _liveLastDetCount) {
+    if (dets.length > 0) {
+      $('lv-tl-section').style.display = '';
+      $('lv-timeline').innerHTML = dets.map(x => {
         let cls = 'c';
         if (x.reklam_var) cls = x.guven === 'Yüksek' ? 'h' : 'm';
         return `<div class="tl-cell ${cls}" title="${x.timestamp}"></div>`;
-      }).join('')}</div>
-    </div>`;
-  }
-
-  // Son tespit edilen frame'ler (ters sırada - en yenisi üstte)
-  html += `<div class="section">
-    <div class="section-head">
-      <div class="section-title-lg">Anlık Frame Akışı</div>
-      <div style="font-size:11px;color:var(--dim)">En yeni üstte</div>
-    </div>`;
-
-  if (dets.length === 0) {
-    html += `<div class="empty-card">Frame'ler analiz edildikçe burada görünecek...</div>`;
-  } else {
-    const reversed = [...dets].reverse().slice(0, 30); // son 30 frame
-    html += `<div class="det-grid">`;
-    for (const x of reversed) {
-      let cls = 'c', pcls = 'c', ptext = 'Temiz';
-      if (x.reklam_var) {
-        cls = x.guven === 'Yüksek' ? 'h' : 'm';
-        pcls = x.guven === 'Yüksek' ? 'h' : 'm';
-        ptext = x.guven;
-      }
-      const brandTags = (x.markalar || []).slice(0, 3).map(b => esc(b)).join(', ');
-      html += `<div class="det-card ${cls}">
-        <img class="det-thumb" src="${x.frame_url}" loading="lazy" onerror="this.style.opacity=0.3">
-        <div class="det-body">
-          <div class="det-row">
-            <span class="det-ts">${x.timestamp}</span>
-            <span class="det-pill ${pcls}">${ptext}</span>
-          </div>
-          <div class="det-sum">${esc(x.ozet || '')}</div>
-          ${brandTags ? `<div style="font-size:10px;color:var(--accent)">${brandTags}</div>` : ''}
-        </div>
-      </div>`;
+      }).join('');
     }
-    html += `</div>`;
-  }
-  html += `</div>`;
 
-  $('main').innerHTML = html;
+    // Frames grid (last 30, newest first)
+    if (dets.length === 0) {
+      $('lv-frames').innerHTML = `<div class="empty-card">Frame'ler analiz edildikçe burada görünecek...</div>`;
+    } else {
+      const reversed = [...dets].reverse().slice(0, 30);
+      $('lv-frames').innerHTML = `<div class="det-grid">` + reversed.map(x => {
+        let cls = 'c', pcls = 'c', ptext = 'Temiz';
+        if (x.reklam_var) {
+          cls = x.guven === 'Yüksek' ? 'h' : 'm';
+          pcls = cls;
+          ptext = x.guven;
+        }
+        const brandTags = (x.markalar || []).slice(0, 3).map(b => esc(b)).join(', ');
+        return `<div class="det-card ${cls}">
+          <img class="det-thumb" src="${x.frame_url}" loading="lazy" onerror="this.style.opacity=0.3">
+          <div class="det-body">
+            <div class="det-row">
+              <span class="det-ts">${x.timestamp}</span>
+              <span class="det-pill ${pcls}">${ptext}</span>
+            </div>
+            <div class="det-sum">${esc(x.ozet || '')}</div>
+            ${brandTags ? `<div style="font-size:10px;color:var(--accent)">${brandTags}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('') + `</div>`;
+    }
+
+    _liveLastDetCount = dets.length;
+  }
 }
 
 // ─── Channel Detail ───
@@ -1330,6 +1399,30 @@ function showFrameDetail(idx) {
 }
 
 function closeModal() { $('modal').classList.remove('on'); }
+
+// ─── Sidebar recent videos ───
+async function loadRecentSidebar() {
+  try {
+    const r = await fetch('/api/recent-videos');
+    const d = await r.json();
+    const list = $('recentList');
+    if (!list) return;
+    if (!d.videos || d.videos.length === 0) {
+      list.innerHTML = '<div style="font-size:10px;color:var(--dimmer);padding:4px 8px">Henüz analiz yok</div>';
+      return;
+    }
+    list.innerHTML = d.videos.map(v => `
+      <div class="recent-item" onclick="goVideo('${esc(v.id)}')">
+        <img class="recent-thumb" src="${esc(v.thumbnail || '')}" onerror="this.style.opacity=0.2">
+        <div class="recent-info">
+          <div class="recent-title">${esc((v.title || '').slice(0, 28))}</div>
+          <div class="recent-ch">${esc(v.channel_name || '')}</div>
+        </div>
+        <div class="recent-ads">${v.ad_frame_count}</div>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
 
 // ─── Utils ───
 function fmtDur(s) {

@@ -204,7 +204,14 @@ def _analyze_video_core(
     if not channel_name:
         channel_name = info.get("channel", "")
 
+    avatar_url = (
+        info.get("channel_thumbnail") or
+        info.get("uploader_thumbnail") or
+        ""
+    )
+
     upsert_channel(channel_id, name=channel_name, url=url,
+                   avatar_url=avatar_url,
                    last_scanned=datetime.utcnow().isoformat())
 
     ch = get_channel(channel_id) or {}
