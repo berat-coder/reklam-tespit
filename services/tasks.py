@@ -167,17 +167,28 @@ def _analyze_video_core(
         if on_status:
             on_status(msg)
 
-    # 1. Meta
+    # 1. Meta — format yoksa bile title/description alabilmek için ignore_no_formats_error
     try:
-        with YoutubeDL(get_ydl_opts({"skip_download": True, "noplaylist": True})) as ydl:
+        with YoutubeDL(get_ydl_opts({
+            "skip_download": True,
+            "noplaylist": True,
+            "ignore_no_formats_error": True,
+        })) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         err = str(e)
         if "Please sign in" in err or "Sign in" in err:
             status("YouTube cookie gerekiyor — Railway'de YOUTUBE_COOKIES env var'ını ayarla")
+        elif "not available" in err or "private" in err.lower() or "removed" in err.lower():
+            status(f"Video erişilemiyor (özel/silinmiş/kısıtlı): {err}")
         else:
             status(f"Meta hatası: {err}")
         on_set_live(status="error", message=err, progress=0)
+        return
+
+    if not info:
+        status("Video bilgisi alınamadı")
+        on_set_live(status="error", message="Video bilgisi alınamadı", progress=0)
         return
 
     video_id = info.get("id")
@@ -215,35 +226,41 @@ def _analyze_video_core(
     on_set_live(desc_brands=desc_brands, channel_logos=channel_logos,
                 message="Stream URL alınıyor...")
 
-    # 3. Stream URL — format yoksa formatorsuz tekrar dene
+    # 3. Stream URL
     status(f"Stream alınıyor: {title[:40]}")
     stream_url = None
-    for fmt_opts in [
-        {"format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best"},
-        {},  # format belirtme, yt-dlp varsayılan seçsin
-    ]:
-        try:
-            with YoutubeDL(get_ydl_opts({
-                "skip_download": True, "noplaylist": True, **fmt_opts
-            })) as ydl:
-                si = ydl.extract_info(url, download=False)
-            stream_url = si.get("url")
-            if not stream_url:
-                for f in reversed(si.get("formats", [])):
-                    if f.get("url") and f.get("vcodec") not in (None, "none"):
-                        stream_url = f["url"]
-                        break
-            if stream_url:
-                break
-        except Exception as e:
-            if "format" in fmt_opts:
-                status(f"Format denemesi başarısız, varsayılan deneniyor: {e}")
-                continue
-            status(f"Stream hatası: {e}")
-            return
+    try:
+        with YoutubeDL(get_ydl_opts({
+            "skip_download": True,
+            "noplaylist": True,
+            "ignore_no_formats_error": True,
+        })) as ydl:
+            si = ydl.extract_info(url, download=False)
+
+        # Tek URL'li format (mp4, HLS)
+        stream_url = si.get("url") if si else None
+
+        # Birleşik format (DASH: ayrı video+audio) → video parçasını al
+        if not stream_url and si:
+            for rf in (si.get("requested_formats") or []):
+                if rf.get("vcodec") not in (None, "none"):
+                    stream_url = rf["url"]
+                    break
+
+        # Hâlâ yoksa format listesinden en iyi video URL'ini seç
+        if not stream_url and si:
+            for f in reversed(si.get("formats") or []):
+                if f.get("url") and f.get("vcodec") not in (None, "none"):
+                    stream_url = f["url"]
+                    break
+    except Exception as e:
+        status(f"Stream hatası: {e}")
+        on_set_live(status="error", message=str(e), progress=0)
+        return
 
     if not stream_url:
-        status("Stream URL bulunamadı")
+        status("Stream URL bulunamadı — video özel veya kısıtlı olabilir")
+        on_set_live(status="error", message="Stream URL bulunamadı", progress=0)
         return
 
     # 4. Frame analizi
