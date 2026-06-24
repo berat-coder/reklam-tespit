@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 import requests as _requests
-from config import BASE_DIR
+from config import BASE_DIR, DATA_DIR
 from yt_dlp import YoutubeDL
 
 _COOKIE_TMPFILE = None
@@ -10,9 +10,10 @@ _COOKIE_TMPFILE = None
 
 def _cookie_file_path():
     global _COOKIE_TMPFILE
-    local = BASE_DIR / "cookies.txt"
-    if local.exists():
-        return str(local)
+    # Önce kalıcı veri dizini (Docker volume), sonra proje kökü, sonra env var
+    for local in (DATA_DIR / "cookies.txt", BASE_DIR / "cookies.txt"):
+        if local.exists():
+            return str(local)
     content = os.environ.get("YOUTUBE_COOKIES", "")
     if content:
         if _COOKIE_TMPFILE is None:
