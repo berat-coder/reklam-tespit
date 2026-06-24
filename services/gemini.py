@@ -1,15 +1,42 @@
 import re
 import json
 import time
+import threading
 import requests
-from config import GEMINI_URL
+from config import gemini_url, GEMINI_MODEL, GEMINI_MODEL_LITE, GEMINI_RPM
 
 
-def gemini_call(api_key, payload, max_attempts=4):
+class RateLimiter:
+    """Dakika başı istek bütçesini sadece gerektiğinde uygular (sliding window)."""
+
+    def __init__(self, rpm):
+        self.gap = 60.0 / rpm if rpm and rpm > 0 else 0.0
+        self._last = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self):
+        if self.gap <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            delta = now - self._last
+            if delta < self.gap:
+                time.sleep(self.gap - delta)
+            self._last = time.monotonic()
+
+
+# Süreç genelinde paylaşılan limiter (free tier varsayılanı; env ile ayarlanır)
+RATE_LIMITER = RateLimiter(GEMINI_RPM)
+
+
+def gemini_call(api_key, payload, max_attempts=4, model=None, limiter=RATE_LIMITER):
+    url = gemini_url(model)
     for attempt in range(max_attempts):
+        if limiter is not None:
+            limiter.wait()
         try:
             r = requests.post(
-                f"{GEMINI_URL}?key={api_key}", json=payload, timeout=60
+                f"{url}?key={api_key}", json=payload, timeout=90
             )
             if r.status_code == 200:
                 return r.json(), None
@@ -134,6 +161,167 @@ YANIT — SADECE JSON:
                 "tespitler": [], "ozet": f"Hata: {str(e)[:60]}", "_skipped": True}
 
 
+def _detection_rules(channel_logos):
+    """Tek ve batch analizde paylaşılan ortak tespit kuralları."""
+    logos = ', '.join(channel_logos[:6]) if channel_logos else 'yok'
+    return f"""GÖREV: Her görüntüde HARİCİ REKLAM, SPONSOR veya MARKA YERLEŞTİRME var mı?
+
+✅ REKLAM SAYILAN (bunlardan HERHANGİ BİRİ varsa reklam_var=true):
+- YouTube pre-roll / mid-roll reklam ekranı (tam ekran reklam, atla butonu, sayaç)
+- Reklam geçiş karesi (siyah, kırmızı, beyaz vs düz renk ekran — reklam arası)
+- Görüntünün herhangi bir köşesinde / kenarında reklam overlay'i, banner
+- Alt bant'ta marka logosu/sloganı/kampanya yazısı
+- Sponsor bandı, indirim kodu, "tıkla"/"satın al"/"kod ile indirim" yazıları
+- Bahis, oyun, bonus, hoşgeldin paketi reklamları
+- Konuşmacının elinde/yanında kasıtlı tuttuğu markalı ürün
+- Arka plan reklam panoları veya logo
+
+🚫 REKLAM SAYMA:
+- Kanalın kendi logosu (kanal logosu listesi: {logos})
+- Program/yayın adı bandı
+- Konuşmacı/misafir isim tagi
+- Sosyal medya hesabı tagi
+
+🔥 KRİTİK:
+- Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et
+- KANAL LOGOSU bir köşede olsa bile SAYMA — AMA aynı karede DİĞER bir köşede
+  FARKLI bir marka/sponsor logosu varsa onu MUTLAKA ayrı tespit olarak YAZ
+  (ör. sol üstte kanal logosu + sağ üstte sponsor markası → sadece sponsoru yaz)
+- Her köşeyi ayrı değerlendir; bir köşedeki kanal logosu diğer köşedeki reklamı gölgelemesin
+- Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
+- HER tespit nesnesinde "marka" alanını doldur (o tespit hangi markaya aitse).
+  Aynı karede 2 marka varsa 2 AYRI tespit nesnesi yaz, her birinde kendi markası.
+- "tur" alanına SADECE ŞU LİSTEDEN TEK BİR kelime yaz — birden fazla yazma,
+  eğik çizgi (/) kullanma, parantez/açıklama EKLEME:
+  "Pre-Roll" | "Mid-Roll" | "Video Reklam" | "Alt Bant" | "Köşe Banner" |
+  "Sponsor Bandı" | "Ürün Yerleştirme" | "Geçiş Karesi" | "Arka Plan"
+- "markalar" dizisine karedeki TÜM reklam markalarını yaz (kanal logosu hariç)"""
+
+
+# Batch JSON çıktısının yapısal şeması — drift/parse hatalarını azaltır
+_BATCH_SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "frame": {"type": "INTEGER"},
+            "reklam_var": {"type": "BOOLEAN"},
+            "guven": {"type": "STRING"},
+            "markalar": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "tespitler": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "tur": {"type": "STRING"},
+                        "konum": {"type": "STRING"},
+                        "marka": {"type": "STRING"},
+                        "detay": {"type": "STRING"},
+                    },
+                },
+            },
+            "ozet": {"type": "STRING"},
+        },
+        "required": ["frame", "reklam_var"],
+    },
+}
+
+
+def _empty_result(ozet="", skipped=False):
+    r = {"reklam_var": False, "guven": "Düşük", "markalar": [],
+         "tespitler": [], "ozet": ozet}
+    if skipped:
+        r["_skipped"] = True
+    return r
+
+
+def gemini_analyze_batch(api_key, frames, channel_logos, known_brands):
+    """
+    Birden fazla frame'i TEK Gemini çağrısında analiz eder.
+    frames: [{"index": int, "timestamp": str, "b64": str}, ...]
+    Döner: {index: result_dict} — eksik index'ler _skipped fallback alır.
+    """
+    if not frames:
+        return {}
+
+    ctx = ""
+    if channel_logos:
+        ctx += f"\n🚫 KANALIN KENDİ LOGOLARI (REKLAM SAYMA): {', '.join(channel_logos[:10])}"
+    if known_brands:
+        ctx += f"\n📌 Video açıklamasında geçen markalar: {', '.join(known_brands[:10])}"
+
+    parts = [{"text": (
+        f"Aşağıda bir YouTube videosundan {len(frames)} ayrı kare var.{ctx}\n\n"
+        f"{_detection_rules(channel_logos)}\n\n"
+        "⚠️ HER KAREYİ BAĞIMSIZ DEĞERLENDİR — bir karedeki markayı diğerine taşıma.\n"
+        "Her kare etiketinden ('=== FRAME N ===') hemen sonra o karenin görüntüsü gelir."
+    )}]
+
+    for f in frames:
+        parts.append({"text": f"\n=== FRAME {f['index']} | zaman {f['timestamp']} ==="})
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": f["b64"]}})
+
+    parts.append({"text": (
+        "\n\nYANIT — SADECE JSON DİZİSİ (her kare için bir nesne, kendi 'frame' "
+        "index'iyle):\n"
+        '[{"frame": N, "reklam_var": true/false, "guven": "Yüksek/Orta/Düşük", '
+        '"markalar": ["..."], "tespitler": [{"tur":"...","konum":"...",'
+        '"marka":"...","detay":"..."}], "ozet": "tek cümle"}]'
+    )})
+
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": max(2000, 350 * len(frames)),
+            "responseMimeType": "application/json",
+            "responseSchema": _BATCH_SCHEMA,
+        },
+    }
+
+    data, err = gemini_call(api_key, payload)
+    indices = [f["index"] for f in frames]
+    if err:
+        return {i: _empty_result(err, skipped=True) for i in indices}
+
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        arr = json.loads(text)
+        if not isinstance(arr, list):
+            arr = [arr]
+    except Exception:
+        # Tek-nesne / bozuk JSON için güvenli parse, tüm frame'lere uygula
+        try:
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            return {i: _empty_result("parse hatası", skipped=True) for i in indices}
+        fallback = parse_json_safe(text)
+        return {i: fallback for i in indices}
+
+    by_index = {}
+    for o in arr:
+        if isinstance(o, dict) and "frame" in o:
+            try:
+                by_index[int(o["frame"])] = o
+            except (TypeError, ValueError):
+                pass
+
+    out = {}
+    for i in indices:
+        o = by_index.get(i)
+        if o is None:
+            out[i] = _empty_result("[batch'te dönmedi]", skipped=True)
+        else:
+            out[i] = {
+                "reklam_var": bool(o.get("reklam_var", False)),
+                "guven": o.get("guven", "Düşük"),
+                "markalar": o.get("markalar", []) or [],
+                "tespitler": o.get("tespitler", []) or [],
+                "ozet": o.get("ozet", ""),
+            }
+    return out
+
+
 def gemini_extract_brands(api_key, title, description):
     text = f"Başlık: {title}\n\nAçıklama:\n{description[:3000]}"
     prompt = (
@@ -148,7 +336,7 @@ def gemini_extract_brands(api_key, title, description):
             "responseMimeType": "application/json",
         },
     }
-    data, err = gemini_call(api_key, payload)
+    data, err = gemini_call(api_key, payload, model=GEMINI_MODEL_LITE)
     if err:
         return []
     try:

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS channels (
     name         TEXT NOT NULL DEFAULT '',
     url          TEXT NOT NULL DEFAULT '',
     channel_logos TEXT NOT NULL DEFAULT '[]',
+    main_sponsors TEXT NOT NULL DEFAULT '[]',
+    sponsor_active_only TEXT NOT NULL DEFAULT '[]',
     avatar_url   TEXT NOT NULL DEFAULT '',
     last_scanned TEXT
 );
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS videos (
     type_counts   TEXT NOT NULL DEFAULT '{}',
     brand_counts  TEXT NOT NULL DEFAULT '{}',
     desc_brands   TEXT NOT NULL DEFAULT '[]',
+    persistent_overlays TEXT NOT NULL DEFAULT '[]',
     completed     INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (channel_id) REFERENCES channels(id)
 );
@@ -46,6 +49,7 @@ CREATE TABLE IF NOT EXISTS detections (
     tespitler  TEXT NOT NULL DEFAULT '[]',
     ozet       TEXT NOT NULL DEFAULT '',
     api_used   INTEGER NOT NULL DEFAULT 1,
+    manual_clean INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (video_id) REFERENCES videos(id)
 );
 """
@@ -70,10 +74,18 @@ def get_db():
 def init_db():
     with get_db() as conn:
         conn.executescript(_SCHEMA)
-        try:
-            conn.execute("ALTER TABLE channels ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''")
-        except Exception:
-            pass
+        # Additive migration'lar — eski data.db'ler için (sütun varsa sessizce geç)
+        for stmt in (
+            "ALTER TABLE channels ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE channels ADD COLUMN main_sponsors TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE channels ADD COLUMN sponsor_active_only TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE videos ADD COLUMN persistent_overlays TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE detections ADD COLUMN manual_clean INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass
 
 
 # ── Kanal ─────────────────────────────────────────────────────────────────────
@@ -107,6 +119,83 @@ def update_channel_logos(ch_id, logos):
         )
 
 
+_FLAG_COL = {
+    "channel_logo": "channel_logos",
+    "main_sponsor": "main_sponsors",
+    "active_only": "sponsor_active_only",
+}
+
+
+def set_channel_brand_flag(ch_id, marka, flag, value):
+    """Bir markayı kanal logosu / ana sponsor / 'sadece aktif reklam' olarak
+    işaretler/kaldırır.
+    flag: 'channel_logo' | 'main_sponsor' | 'active_only'  ·  value: True/False"""
+    col = _FLAG_COL.get(flag)
+    if not col:
+        raise ValueError("Geçersiz flag")
+    marka = (marka or "").strip()
+    if not marka:
+        raise ValueError("marka gerekli")
+    ch = get_channel(ch_id) or {}
+    field = {"channel_logos": "channel_logos", "main_sponsors": "main_sponsors",
+             "sponsor_active_only": "sponsor_active_only"}[col]
+    cur = ch.get(field, [])
+    key = marka.casefold()
+    others = [m for m in cur if m.casefold() != key]
+    new_list = (others + [marka]) if value else others
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE channels SET {col} = ? WHERE id = ?",
+            (json.dumps(new_list, ensure_ascii=False), ch_id),
+        )
+    return new_list
+
+
+def edit_brand_global(video_id, action, marka, new_marka=None):
+    """Bir videodaki TÜM karelerde bir markayı yeniden adlandırır veya kaldırır.
+    action: 'rename' | 'remove'. Etkilenen satırları tek tek günceller
+    (manual_clean korunur ve düzenlenen satırlara işaretlenir)."""
+    key = (marka or "").strip().casefold()
+    if not key:
+        raise ValueError("marka gerekli")
+    if action == "rename":
+        new_marka = (new_marka or "").strip()
+        if not new_marka:
+            raise ValueError("yeni marka gerekli")
+
+    dets = get_detections(video_id)
+    with get_db() as conn:
+        for d in dets:
+            tespitler = d.get("tespitler", []) or []
+            markalar = d.get("markalar", []) or []
+            has = (any((t.get("marka") or "").strip().casefold() == key for t in tespitler)
+                   or any((m or "").strip().casefold() == key for m in markalar))
+            if not has:
+                continue
+
+            if action == "rename":
+                for t in tespitler:
+                    if (t.get("marka") or "").strip().casefold() == key:
+                        t["marka"] = new_marka
+                markalar = [new_marka if (m or "").strip().casefold() == key else m for m in markalar]
+            else:  # remove
+                tespitler = [t for t in tespitler if (t.get("marka") or "").strip().casefold() != key]
+                markalar = [m for m in markalar if (m or "").strip().casefold() != key]
+
+            markalar = list(dict.fromkeys(m for m in markalar if (m or "").strip()))
+            reklam_var = 1 if (tespitler or markalar) else 0
+            conn.execute("""
+                UPDATE detections
+                SET reklam_var = ?, markalar = ?, tespitler = ?, manual_clean = 1
+                WHERE video_id = ? AND idx = ?
+            """, (
+                int(reklam_var),
+                json.dumps(markalar, ensure_ascii=False),
+                json.dumps(tespitler, ensure_ascii=False),
+                video_id, d["index"],
+            ))
+
+
 # ── Video ─────────────────────────────────────────────────────────────────────
 
 def get_video(video_id):
@@ -136,14 +225,14 @@ def is_video_completed(video_id):
 def upsert_video(video_id, channel_id, title="", url="", duration=0,
                  thumbnail="", analyzed_at=None, total_frames=0, api_calls=0,
                  ad_frame_count=0, type_counts=None, brand_counts=None,
-                 desc_brands=None, completed=False):
+                 desc_brands=None, persistent_overlays=None, completed=False):
     with get_db() as conn:
         conn.execute("""
             INSERT INTO videos (
                 id, channel_id, title, url, duration, thumbnail, analyzed_at,
                 total_frames, api_calls, ad_frame_count,
-                type_counts, brand_counts, desc_brands, completed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                type_counts, brand_counts, desc_brands, persistent_overlays, completed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title         = COALESCE(NULLIF(excluded.title, ''),     videos.title),
                 url           = COALESCE(NULLIF(excluded.url, ''),       videos.url),
@@ -156,6 +245,7 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
                 type_counts   = excluded.type_counts,
                 brand_counts  = excluded.brand_counts,
                 desc_brands   = COALESCE(excluded.desc_brands,           videos.desc_brands),
+                persistent_overlays = excluded.persistent_overlays,
                 completed     = excluded.completed
         """, (
             video_id, channel_id, title, url, duration, thumbnail,
@@ -163,6 +253,7 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
             json.dumps(type_counts or {}, ensure_ascii=False),
             json.dumps(brand_counts or {}, ensure_ascii=False),
             json.dumps(desc_brands or [], ensure_ascii=False),
+            json.dumps(persistent_overlays or [], ensure_ascii=False),
             int(completed),
         ))
 
@@ -204,6 +295,103 @@ def get_detections(video_id):
         return [_det(r) for r in rows]
 
 
+def get_detection(video_id, index):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM detections WHERE video_id = ? AND idx = ?",
+            (video_id, index),
+        ).fetchone()
+        return _det(row) if row else None
+
+
+def _rebuild_markalar(tespitler):
+    return list(dict.fromkeys(
+        (t.get("marka") or "").strip()
+        for t in tespitler if (t.get("marka") or "").strip()))
+
+
+def update_detection(video_id, index, action, tespit_index=None, marka=None,
+                     tur=None, konum=None, detay=None):
+    """Tek bir tespit satırına manuel düzeltme uygular (tek UPDATE).
+    action: mark_clean | remove_tespit | remove_brand | add_tespit
+    ValueError fırlatır → çağıran 400 döndürür."""
+    det = get_detection(video_id, index)
+    if det is None:
+        raise ValueError("Tespit bulunamadı")
+
+    tespitler = det.get("tespitler", []) or []
+
+    if action == "add_tespit":
+        marka_v = (marka or "").strip()
+        tur_v = (tur or "").strip() or "Reklam"
+        if not marka_v and not (detay or "").strip():
+            raise ValueError("En az marka veya açıklama gerekli")
+        tespitler = tespitler + [{
+            "tur": tur_v, "marka": marka_v,
+            "konum": (konum or "").strip(), "detay": (detay or "").strip(),
+        }]
+        markalar = _rebuild_markalar(tespitler)
+        reklam_var = 1
+        guven = "Yüksek"  # manuel ekleme = kesin
+    elif action == "mark_clean":
+        tespitler, markalar, reklam_var, guven = [], [], 0, "Düşük"
+    elif action == "remove_tespit":
+        if tespit_index is None or not (0 <= tespit_index < len(tespitler)):
+            raise ValueError("Geçersiz tespit_index")
+        tespitler = [t for i, t in enumerate(tespitler) if i != tespit_index]
+        markalar = _rebuild_markalar(tespitler)
+        reklam_var = 1 if tespitler else 0
+        guven = det.get("guven", "Düşük") if tespitler else "Düşük"
+    elif action == "remove_brand":
+        key = (marka or "").strip().casefold()
+        if not key:
+            raise ValueError("marka gerekli")
+        tespitler = [t for t in tespitler if (t.get("marka") or "").strip().casefold() != key]
+        markalar = _rebuild_markalar(tespitler)
+        reklam_var = 1 if tespitler else 0
+        guven = det.get("guven", "Düşük") if tespitler else "Düşük"
+    else:
+        raise ValueError(f"Bilinmeyen action: {action}")
+
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE detections
+            SET reklam_var = ?, guven = ?, markalar = ?, tespitler = ?, manual_clean = 1
+            WHERE video_id = ? AND idx = ?
+        """, (
+            int(reklam_var), guven,
+            json.dumps(markalar, ensure_ascii=False),
+            json.dumps(tespitler, ensure_ascii=False),
+            video_id, index,
+        ))
+
+
+def recompute_video_aggregates(video_id):
+    """Mevcut tespitlerden video agregatlarını sıfırdan yeniden hesaplar ve kaydeder.
+    Düzeltme/silme veya 'kanal logosu' işaretleme sonrası çağrılır. agg döner."""
+    from services.aggregates import compute_aggregates
+    v = get_video(video_id)
+    if not v:
+        return None
+    ch = get_channel(v["channel_id"]) or {}
+    detections = get_detections(video_id)
+    agg = compute_aggregates(detections, ch.get("channel_logos", []),
+                             ch.get("main_sponsors", []),
+                             ch.get("sponsor_active_only", []))
+    upsert_video(
+        video_id=video_id,
+        channel_id=v["channel_id"],
+        total_frames=v.get("total_frames", 0),   # koşulsuz yazılır → koru
+        api_calls=v.get("api_calls", 0),          # koşulsuz yazılır → koru
+        ad_frame_count=agg["ad_frame_count"],
+        type_counts=agg["type_counts"],
+        brand_counts=agg["brand_counts"],
+        persistent_overlays=agg["persistent_overlays"],
+        completed=v.get("completed", True),
+    )
+    return agg
+
+
 def get_recent_videos(limit=10):
     with get_db() as conn:
         rows = conn.execute("""
@@ -218,6 +406,135 @@ def get_recent_videos(limit=10):
         return [dict(r) for r in rows]
 
 
+# ── Global / kanallar arası toplama (Sponsorluk İstihbarat Paneli) ─────────────
+
+def get_all_videos(completed_only=True):
+    with get_db() as conn:
+        q = """
+            SELECT v.*, c.name AS channel_name, c.avatar_url AS channel_avatar
+            FROM videos v
+            LEFT JOIN channels c ON c.id = v.channel_id
+        """
+        if completed_only:
+            q += " WHERE v.completed = 1"
+        q += " ORDER BY v.analyzed_at DESC"
+        rows = conn.execute(q).fetchall()
+        out = []
+        for r in rows:
+            d = _vid(r)
+            d["channel_name"] = r["channel_name"] or d["channel_id"]
+            d["channel_avatar"] = r["channel_avatar"] or ""
+            out.append(d)
+        return out
+
+
+def get_dashboard_data(since=None):
+    """Tüm tamamlanmış videolardan kanallar arası özet üretir.
+    since: ISO tarih string'i — bu tarihten sonra analiz edilenler (analyzed_at)."""
+    videos = get_all_videos(completed_only=True)
+    if since:
+        videos = [v for v in videos if (v.get("analyzed_at") or "") >= since]
+    channels = {}
+    brand_acc = {}   # key -> {marka, count, videos:set, channels:set}
+    type_totals = {}
+    total_ads = 0
+
+    for v in videos:
+        cid = v["channel_id"]
+        total_ads += v.get("ad_frame_count", 0)
+        ch = channels.get(cid)
+        if ch is None:
+            ch = channels[cid] = {
+                "id": cid, "name": v.get("channel_name", cid),
+                "avatar": v.get("channel_avatar", ""),
+                "video_count": 0, "ad_frame_count": 0, "_brands": {},
+            }
+        ch["video_count"] += 1
+        ch["ad_frame_count"] += v.get("ad_frame_count", 0)
+
+        for marka, count in (v.get("brand_counts") or {}).items():
+            k = marka.strip().casefold()
+            if not k:
+                continue
+            b = brand_acc.get(k)
+            if b is None:
+                b = brand_acc[k] = {"marka": marka, "count": 0,
+                                    "videos": set(), "channels": set()}
+            b["count"] += count
+            b["videos"].add(v["id"])
+            b["channels"].add(cid)
+            ch["_brands"][marka] = ch["_brands"].get(marka, 0) + count
+
+        for tur, count in (v.get("type_counts") or {}).items():
+            type_totals[tur] = type_totals.get(tur, 0) + count
+
+    top_brands = sorted(
+        ({"marka": b["marka"], "count": b["count"],
+          "video_count": len(b["videos"]), "channel_count": len(b["channels"])}
+         for b in brand_acc.values()),
+        key=lambda x: -x["count"],
+    )
+    top_channels = sorted((
+        {"id": c["id"], "name": c["name"], "avatar": c["avatar"],
+         "video_count": c["video_count"], "ad_frame_count": c["ad_frame_count"],
+         "top_brand": (max(c["_brands"].items(), key=lambda x: x[1])[0]
+                       if c["_brands"] else "")}
+        for c in channels.values()
+    ), key=lambda x: -x["ad_frame_count"])
+
+    return {
+        "totals": {
+            "channels": len(channels),
+            "videos": len(videos),
+            "ad_frames": total_ads,
+            "brands": len(brand_acc),
+        },
+        "top_brands": top_brands,
+        "top_channels": top_channels,
+        "type_totals": [{"name": t, "count": c}
+                        for t, c in sorted(type_totals.items(), key=lambda x: -x[1])],
+        "recent": get_recent_videos(8),
+    }
+
+
+def get_brand_appearances(marka):
+    """Bir markanın tüm kanal/videolardaki görünümleri + haftalık trend."""
+    key = (marka or "").strip().casefold()
+    videos = get_all_videos(completed_only=True)
+    out_videos = []
+    channels = set()
+    total = 0
+    timeline = {}
+    display = marka
+    for v in videos:
+        bc = v.get("brand_counts") or {}
+        match = next((m for m in bc if m.strip().casefold() == key), None)
+        if not match:
+            continue
+        cnt = bc[match]
+        display = match
+        total += cnt
+        channels.add(v["channel_id"])
+        out_videos.append({
+            "video_id": v["id"], "title": v["title"],
+            "channel_id": v["channel_id"], "channel_name": v.get("channel_name", ""),
+            "thumbnail": v["thumbnail"], "analyzed_at": v["analyzed_at"],
+            "count": cnt,
+        })
+        day = (v.get("analyzed_at") or "")[:10]
+        if day:
+            timeline[day] = timeline.get(day, 0) + cnt
+
+    return {
+        "marka": display,
+        "total": total,
+        "video_count": len(out_videos),
+        "channel_count": len(channels),
+        "videos": out_videos,
+        "timeline": [{"date": d, "count": c} for d, c in sorted(timeline.items())],
+    }
+
+
 # ── Row → dict dönüştürücüler ─────────────────────────────────────────────────
 
 def _ch(row):
@@ -227,6 +544,8 @@ def _ch(row):
         "name": d["name"],
         "url": d["url"],
         "channel_logos": json.loads(d.get("channel_logos") or "[]"),
+        "main_sponsors": json.loads(_col(d, "main_sponsors", None) or "[]"),
+        "sponsor_active_only": json.loads(_col(d, "sponsor_active_only", None) or "[]"),
         "avatar_url": d.get("avatar_url", ""),
         "last_scanned": d.get("last_scanned"),
     }
@@ -247,8 +566,18 @@ def _vid(row):
         "type_counts": json.loads(row["type_counts"] or "{}"),
         "brand_counts": json.loads(row["brand_counts"] or "{}"),
         "desc_brands": json.loads(row["desc_brands"] or "[]"),
+        "persistent_overlays": json.loads(_col(row, "persistent_overlays") or "[]"),
         "completed": bool(row["completed"]),
     }
+
+
+def _col(row, key, default=None):
+    """Eski şemalarda olmayabilecek sütunu güvenle okur."""
+    try:
+        v = row[key]
+        return v if v is not None else default
+    except (IndexError, KeyError):
+        return default
 
 
 def _det(row):
@@ -263,4 +592,5 @@ def _det(row):
         "tespitler": json.loads(row["tespitler"] or "[]"),
         "ozet": row["ozet"],
         "_api_used": bool(row["api_used"]),
+        "manual_clean": bool(_col(row, "manual_clean", 0)),
     }

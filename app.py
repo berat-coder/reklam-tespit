@@ -38,7 +38,8 @@ if __name__ == "__main__":
     print("  YouTube Reklam Tespit v4")
     print("  Tarayıcı: http://127.0.0.1:5001")
     print("=" * 58 + "\n")
-    threading.Thread(target=_open_browser, daemon=True).start()
+    if not os.environ.get("NO_BROWSER"):
+        threading.Thread(target=_open_browser, daemon=True).start()
     app.run(
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 5001)),

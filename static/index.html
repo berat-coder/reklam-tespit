@@ -2,7 +2,10 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reklam Tespit Sistemi</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.24.0/dist/tabler-icons.min.css">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -51,6 +54,16 @@ body {
 .section-title {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--dimmer); font-weight: 600; margin-bottom: 8px;
+}
+.recent-toggle {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 4px 4px; border-radius: 6px; user-select: none;
+}
+.recent-toggle:hover { background: var(--bg3); color: var(--dim); }
+.recent-toggle .ti { font-size: 13px; }
+.recent-badge {
+  margin-left: auto; background: var(--bg3); color: var(--dim);
+  font-size: 9px; padding: 1px 7px; border-radius: 99px; letter-spacing: 0;
 }
 
 .btn {
@@ -308,6 +321,135 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .brand-bar-fill { height: 100%; background: var(--accent); }
 .brand-bar-count { width: 32px; text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
 
+/* Sürekli ekran öğeleri (kalıcı bindirme) */
+.overlay-list { display: flex; flex-direction: column; gap: 8px; }
+.overlay-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+  border-left: 3px solid var(--dimmer);
+}
+.overlay-row.sponsor { border-left-color: var(--accent); }
+.overlay-row.mainsponsor { border-left-color: var(--amber); }
+.overlay-row.logo { border-left-color: var(--green); opacity: 0.78; }
+.overlay-row > i { font-size: 18px; color: var(--dim); flex-shrink: 0; }
+.overlay-row.sponsor > i { color: var(--accent); }
+.overlay-row.mainsponsor > i { color: var(--amber); }
+.overlay-row.logo > i { color: var(--green); }
+.overlay-info { flex: 1; min-width: 0; }
+.overlay-name { font-size: 13px; }
+.overlay-meta { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.overlay-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.overlay-tag {
+  font-size: 10px; color: var(--green); background: rgba(68,204,136,0.12);
+  padding: 3px 8px; border-radius: 99px; white-space: nowrap; flex-shrink: 0;
+}
+.overlay-tag.star { color: var(--amber); background: rgba(255,170,34,0.14); }
+
+/* Marka kartı aksiyon butonları */
+.brand-card.is-sponsor { border-color: var(--amber); }
+.brand-card-acts { display: flex; gap: 4px; flex-shrink: 0; }
+.brand-act {
+  background: none; border: 1px solid var(--border2); color: var(--dim);
+  width: 30px; height: 30px; border-radius: 7px; cursor: pointer; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+}
+.brand-act:hover { color: var(--text); border-color: var(--dim); }
+.brand-act.on { color: var(--amber); border-color: var(--amber); }
+.brand-act.on-green { color: var(--green); border-color: var(--green); }
+.brand-act.danger:hover { color: var(--red); border-color: var(--red); }
+
+/* Panel & marka detay */
+.export-bar { display: flex; gap: 8px; flex-shrink: 0; }
+.lb-row {
+  display: flex; align-items: center; gap: 12px; padding: 9px 10px;
+  border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--border);
+}
+.lb-row:hover { background: var(--bg3); }
+.lb-name { width: 150px; font-size: 13px; font-weight: 600; flex-shrink: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-meta { font-size: 11px; color: var(--dim); white-space: nowrap; text-align: right; }
+.lb-meta span { color: var(--dimmer); }
+.brand-link { cursor: pointer; }
+.brand-link:hover { color: var(--accent); text-decoration: underline; }
+.brand-vid-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+  border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--border);
+}
+.brand-vid-row:hover { background: var(--bg3); }
+.brand-vid-info { flex: 1; min-width: 0; }
+.brand-vid-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-vid-ch { font-size: 11px; color: var(--dim); margin-top: 2px; }
+
+/* Yazdırma (PDF) — sadece rapor içeriği */
+@media print {
+  .sidebar, .sidebar-backdrop, .menu-toggle, .toast-wrap,
+  .export-bar, .det-filters, .brand-card-acts, .overlay-actions,
+  #lv-actions { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .layout { grid-template-columns: 1fr !important; }
+  .main { padding: 0 !important; }
+  .section, .brand-card, .stat-tile, .overlay-row {
+    background: #fff !important; border-color: #ccc !important;
+    color: #000 !important; box-shadow: none !important; break-inside: avoid;
+  }
+  .section-title-lg, h1, strong, .stat-tile-num { color: #000 !important; }
+  .subtitle, .brand-card-span, .overlay-meta, .lb-meta { color: #444 !important; }
+  .type-chip, .brand-pill { border-color: #999 !important; color: #000 !important; }
+  .brand-bar-track { background: #eee !important; }
+  .brand-bar-fill { background: #888 !important; }
+  a, .brand-link { color: #000 !important; text-decoration: none !important; }
+}
+
+/* Marka raporu — gruplu kartlar */
+.brand-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.brand-card-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; }
+.brand-card-head:hover { background: var(--bg4); }
+.brand-caret { font-size: 16px; color: var(--dim); flex-shrink: 0; }
+.brand-card-main { flex: 1; min-width: 0; }
+.brand-card-title { display: flex; align-items: center; gap: 10px; }
+.brand-card-title strong { font-size: 14px; }
+.brand-card-count { font-size: 12px; color: var(--accent); font-weight: 600; }
+.brand-card-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.type-chip {
+  font-size: 10px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border2); padding: 2px 8px; border-radius: 99px;
+}
+.type-chip.clickable { cursor: pointer; }
+.type-chip.clickable:hover { border-color: var(--accent); color: var(--accent); }
+.bframe-filter {
+  flex-basis: 100%; width: 100%; font-size: 12px; color: var(--dim);
+  display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+}
+.bframe-filter button {
+  background: var(--bg3); border: 1px solid var(--border2); color: var(--text);
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+}
+.brand-card-span { font-size: 11px; color: var(--dim); font-family: monospace; white-space: nowrap; flex-shrink: 0; }
+.brand-frames { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg2); }
+.bframe { position: relative; width: 130px; cursor: pointer; border-radius: 6px; overflow: hidden; }
+.bframe img { width: 100%; height: 74px; object-fit: cover; display: block; background: var(--bg3); }
+.bframe:hover { outline: 2px solid var(--accent); }
+.bframe-ts {
+  position: absolute; bottom: 4px; left: 4px; font-size: 10px;
+  background: rgba(0,0,0,0.7); color: #fff; padding: 1px 5px; border-radius: 4px; font-family: monospace;
+}
+
+/* Manuel reklam ekleme formu */
+.add-field { margin-bottom: 8px; }
+.add-field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+.add-field input, .add-field select {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; font-family: inherit;
+}
+
+/* Modal tespit silme butonu */
+.tespit-del {
+  background: none; border: none; color: var(--dimmer); cursor: pointer;
+  font-size: 16px; padding: 2px 6px; border-radius: 6px; flex-shrink: 0; height: fit-content;
+}
+.tespit-del:hover { color: var(--red); background: rgba(255,68,102,0.12); }
+.det-manual { color: var(--blue); font-size: 11px; }
+
 /* Recent sidebar items */
 .recent-item {
   display: flex; align-items: center; gap: 8px; padding: 5px 8px;
@@ -328,14 +470,56 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
 }
 
+/* Dönen yükleme ikonu (ti-loader-2) */
+@keyframes spin { to { transform: rotate(360deg); } }
+.ti-loader-2 { display: inline-block; animation: spin 0.9s linear infinite; }
+
+/* Mobil menü butonu — varsayılan gizli, dar ekranda görünür */
+.menu-toggle {
+  display: none; position: fixed; top: 12px; left: 12px; z-index: 60;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+  width: 40px; height: 40px; border-radius: 8px; font-size: 20px; cursor: pointer;
+  align-items: center; justify-content: center;
+}
+.sidebar-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
+}
+
+/* Toast bildirimleri (alert yerine) */
+.toast-wrap {
+  position: fixed; top: 16px; right: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; max-width: 360px;
+}
+.toast {
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-left: 3px solid var(--blue); color: var(--text);
+  padding: 12px 16px; border-radius: 8px; font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  animation: toast-in 0.2s ease; display: flex; align-items: center; gap: 8px;
+}
+.toast.error { border-left-color: var(--red); }
+.toast.success { border-left-color: var(--green); }
+@keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
 @media (max-width: 800px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { height: auto; position: relative; }
-  .main { padding: 16px; }
+  .menu-toggle { display: flex; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 50;
+    height: 100vh; transform: translateX(-100%); transition: transform 0.2s ease;
+  }
+  .sidebar.open { transform: none; }
+  .sidebar.open ~ .sidebar-backdrop { display: block; }
+  .main { padding: 16px; padding-top: 64px; }
+  .channel-grid, .video-list { grid-template-columns: 1fr !important; }
+  .det-grid, .stat-tiles { grid-template-columns: repeat(2, 1fr) !important; }
 }
 </style>
 </head>
 <body>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<button class="menu-toggle" id="menuToggle" aria-label="Menüyü aç/kapat" onclick="toggleSidebar()"><i class="ti ti-menu-2"></i></button>
 
 <div class="setup-overlay" id="setupOv" style="display:none">
   <div class="setup-card">
@@ -352,7 +536,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 </div>
 
 <div class="layout">
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <div class="brand">
       <div class="brand-icon">▶</div>
       <div>
@@ -387,29 +571,35 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
     <div>
       <div class="section-title">Menü</div>
       <div class="nav">
-        <div class="nav-item active" onclick="goHome()" id="navHome">
+        <div class="nav-item active" role="button" tabindex="0" onclick="toggleSidebar(false); goHome()" id="navHome">
           <i class="ti ti-home"></i> Kanallar
         </div>
-        <div class="nav-item" onclick="goLive(null)" id="navLive" style="display:none">
+        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goDashboard()" id="navDash">
+          <i class="ti ti-chart-bar"></i> Panel
+        </div>
+        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goLive(null)" id="navLive" style="display:none">
           <i class="ti ti-broadcast" style="color:var(--accent)"></i> Canlı Analiz
         </div>
-        <div class="nav-item" onclick="openSetup()">
+        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); openSetup()">
           <i class="ti ti-settings"></i> Ayarlar
         </div>
       </div>
     </div>
 
     <div id="recentSidebarSection">
-      <div class="section-title">Son Analizler</div>
-      <div id="recentList" style="display:flex;flex-direction:column;gap:2px">
-        <div style="font-size:10px;color:var(--dimmer);padding:4px 8px">Yükleniyor...</div>
+      <div class="section-title recent-toggle" onclick="goAnalyses()" role="button" tabindex="0" title="Tüm analizleri aç">
+        <span>Son Analizler</span>
+        <span class="recent-badge" id="recentCount"></span>
+        <i class="ti ti-chevron-right" style="margin-left:4px"></i>
       </div>
     </div>
 
     <div style="font-size:10px;color:var(--dimmer);text-align:center;padding-top:10px;border-top:1px solid var(--border)">
-      ~$0.005 / frame
+      Batch + sahne filtresi · düşük maliyet
     </div>
   </div>
+
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
 
   <div class="main" id="main">
     <!-- içerik dinamik yüklenir -->
@@ -426,6 +616,27 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 <script>
 const $ = id => document.getElementById(id);
 let state = { page: 'home', channelId: null, videoId: null, filter: 'all', browseFilter: 'all' };
+
+// ─── Toast bildirimleri (alert yerine) ───
+function toast(msg, type = 'info', ms = 4000) {
+  const wrap = $('toastWrap');
+  if (!wrap) { console.log(msg); return; }
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  const icon = type === 'error' ? 'ti-alert-triangle' : type === 'success' ? 'ti-circle-check' : 'ti-info-circle';
+  el.innerHTML = `<i class="ti ${icon}"></i><span></span>`;
+  el.querySelector('span').textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 200); }, ms);
+}
+
+// ─── Mobil sidebar aç/kapat ───
+function toggleSidebar(force) {
+  const sb = $('sidebar');
+  if (!sb) return;
+  const open = force === undefined ? !sb.classList.contains('open') : force;
+  sb.classList.toggle('open', open);
+}
 
 // ─── Init ───
 window.addEventListener('DOMContentLoaded', async () => {
@@ -455,7 +666,7 @@ async function refreshKey() {
 function openSetup() { $('setupOv').style.display = 'flex'; setTimeout(()=>$('setupKey').focus(),50); }
 async function saveKey() {
   const k = $('setupKey').value.trim();
-  if (!k) { alert('Anahtar boş olamaz'); return; }
+  if (!k) { toast('Anahtar boş olamaz', 'error'); return; }
   await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({gemini_api_key: k})
@@ -506,7 +717,7 @@ function goHome() {
   state.page = 'home';
   state.channelId = null;
   state.videoId = null;
-  $('navHome').classList.add('active');
+  setActiveNav('navHome');
   loadHome();
   loadRecentSidebar();
 }
@@ -600,14 +811,14 @@ async function loadHome() {
 async function analyzeManualUrl() {
   const input = document.getElementById('manualUrlInput');
   const url = (input ? input.value : '').trim();
-  if (!url) { alert('URL girin'); return; }
-  if (!url.includes('youtu')) { alert('Geçerli YouTube URL\'si girin'); return; }
+  if (!url) { toast('URL girin', 'error'); return; }
+  if (!url.includes('youtu')) { toast('Geçerli YouTube URL\'si girin', 'error'); return; }
   const r = await fetch('/api/analyze/video', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({url})
   });
   const d = await r.json();
-  if (d.error) { alert('Hata: ' + d.error); return; }
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
   if (input) input.value = '';
   goLive(null);
 }
@@ -618,7 +829,7 @@ async function addChannelPrompt() {
   const r = await fetch('/api/config');
   const cfg = await r.json();
   const channels = cfg.channels || [];
-  if (channels.includes(url)) { alert('Bu kanal zaten ekli'); return; }
+  if (channels.includes(url)) { toast('Bu kanal zaten ekli', 'info'); return; }
   channels.push(url);
   await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -634,8 +845,8 @@ async function scanAll(hours) {
     body: JSON.stringify({hours})
   });
   const d = await r.json();
-  if (d.error) alert('Hata: ' + d.error);
-  else alert(`${d.count} kanal sıraya alındı`);
+  if (d.error) toast('Hata: ' + d.error, 'error');
+  else toast(`${d.count} kanal sıraya alındı`, 'success');
 }
 
 async function scanChannel(channelUrl, hours) {
@@ -644,7 +855,7 @@ async function scanChannel(channelUrl, hours) {
     body: JSON.stringify({url: channelUrl, hours})
   });
   const d = await r.json();
-  if (d.error) alert('Hata: ' + d.error);
+  if (d.error) toast('Hata: ' + d.error, 'error');
 }
 
 // ─── Channel Browse (Manuel Video Seçim) ───
@@ -841,7 +1052,7 @@ async function analyzeVideoFromBrowse(videoUrl, channelId, btnEl) {
   });
   const d = await r.json();
   if (d.error) {
-    alert('Hata: ' + d.error);
+    toast('Hata: ' + d.error, 'error');
     if (btnEl) {
       btnEl.disabled = false;
       btnEl.innerHTML = '<i class="ti ti-player-play"></i> Analiz Et';
@@ -864,7 +1075,7 @@ function goLive(channelId) {
   _liveBuilt = false;
   _liveLastDetCount = -1;
   _liveWaitCount = 0;
-  $('navHome').classList.remove('active');
+  setActiveNav(null);
   startLivePolling();
 }
 
@@ -1110,7 +1321,7 @@ function goChannel(id) {
   stopLivePolling();
   state.page = 'channel';
   state.channelId = id;
-  $('navHome').classList.remove('active');
+  setActiveNav(null);
   loadChannel(id);
 }
 
@@ -1139,6 +1350,8 @@ async function loadChannel(id) {
         <button class="btn" onclick="goBrowse('${esc(ch.id)}')">
           <i class="ti ti-list-search"></i> Video Seç
         </button>
+        <button class="btn" onclick="exportCSV('/api/channel/${encodeURIComponent(ch.id)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
+        <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF</button>
       </div>
     </div>
   `;
@@ -1179,8 +1392,8 @@ async function loadChannel(id) {
       <div class="section-head"><div class="section-title-lg">En Çok Görülen Reklamverenler</div></div>
       <div>
         ${top10.map(b => `
-          <div class="brand-bar-row">
-            <div class="brand-bar-name">${esc(b.name)}</div>
+          <div class="brand-bar-row lb-row" onclick="openBrand('${jsq(b.name)}')">
+            <div class="brand-bar-name brand-link">${esc(b.name)}</div>
             <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${Math.round((b.count/max)*100)}%"></div></div>
             <div class="brand-bar-count">${b.count}</div>
           </div>
@@ -1259,15 +1472,221 @@ function renderDonut(items) {
 }
 
 // ─── Video Detail ───
+function setActiveNav(active) {
+  ['navHome', 'navDash'].forEach(n => {
+    const el = $(n);
+    if (el) el.classList.toggle('active', n === active);
+  });
+}
+
 function goVideo(id) {
   stopLivePolling();
   state.page = 'video';
   state.videoId = id;
   state.filter = 'all';
+  setActiveNav(null);
   loadVideo(id);
 }
 
+// ─── Sponsorluk İstihbarat Paneli ───
+function goDashboard() {
+  stopLivePolling();
+  state.page = 'dashboard';
+  state.channelId = null;
+  state.videoId = null;
+  setActiveNav('navDash');
+  loadDashboard();
+}
+
+const DATE_FILTERS = [{d:0,l:'Tümü'},{d:7,l:'Son 1 Hafta'},{d:30,l:'Son 1 Ay'},{d:90,l:'Son 3 Ay'}];
+
+function dateFilterBar(active, onclickFn) {
+  return `<div class="det-filters">${DATE_FILTERS.map(f =>
+    `<div class="filter-btn ${active===f.d?'active':''}" onclick="${onclickFn}(${f.d})">${f.l}</div>`
+  ).join('')}</div>`;
+}
+
+async function loadDashboard() {
+  const days = state.dashDays || 0;
+  const r = await fetch('/api/dashboard?days=' + days);
+  const d = await r.json();
+  window._dashData = d;
+  const t = d.totals || {};
+  let html = `
+    <div class="page-header">
+      <div>
+        <h1>Sponsorluk İstihbarat Paneli</h1>
+        <div class="subtitle">Analiz tarihine göre · kanallar genelinde marka & reklam analitiği</div>
+      </div>
+      <div class="export-bar">
+        <button class="btn" onclick="exportCSV('/api/dashboard/export.csv?days=${days}')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
+        <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF / Yazdır</button>
+      </div>
+    </div>
+    ${dateFilterBar(days, 'setDashDays')}
+    <div class="stat-tiles">
+      <div class="stat-tile"><div class="stat-tile-num">${t.channels||0}</div><div class="stat-tile-lbl">Kanal</div></div>
+      <div class="stat-tile"><div class="stat-tile-num">${t.videos||0}</div><div class="stat-tile-lbl">Analiz Edilen Video</div></div>
+      <div class="stat-tile red"><div class="stat-tile-num">${t.ad_frames||0}</div><div class="stat-tile-lbl">Toplam Reklam Karesi</div></div>
+      <div class="stat-tile blue"><div class="stat-tile-num">${t.brands||0}</div><div class="stat-tile-lbl">Benzersiz Marka</div></div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title-lg">En Çok Reklam Veren Markalar</div>
+        <div class="det-filters" style="margin:0">
+          <div class="filter-btn ${(state.brandSort||'channels')==='channels'?'active':''}" onclick="setBrandSort('channels')">Kanal sayısına göre</div>
+          <div class="filter-btn ${state.brandSort==='count'?'active':''}" onclick="setBrandSort('count')">Reklam sayısına göre</div>
+        </div>
+      </div>
+      <div id="brandLeaderboard"></div>
+    </div>`;
+
+  const chans = d.top_channels || [];
+  if (chans.length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">En Aktif Kanallar</div></div>
+      ${chans.map(c => `
+        <div class="lb-row" onclick="goChannel('${jsq(c.id)}')">
+          <div class="lb-name">${esc(c.name)}</div>
+          <div class="lb-meta" style="flex:1">${c.top_brand ? 'En çok: <strong>'+esc(c.top_brand)+'</strong>' : ''}</div>
+          <div class="lb-meta">${c.ad_frame_count} reklam · ${c.video_count} video</div>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  if ((d.type_totals || []).length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Reklam Türü Dağılımı</div></div>
+      ${renderDonut(d.type_totals.map(x => ({name: x.name, count: x.count})))}</div>`;
+  }
+
+  $('main').innerHTML = html;
+  renderBrandLeaderboard();
+}
+
+function renderBrandLeaderboard() {
+  const box = $('brandLeaderboard');
+  if (!box || !window._dashData) return;
+  const sort = state.brandSort || 'channels';
+  const brands = [...(window._dashData.top_brands || [])].sort((a, b) =>
+    sort === 'count'
+      ? (b.count - a.count) || (b.channel_count - a.channel_count)
+      : (b.channel_count - a.channel_count) || (b.count - a.count));
+  if (!brands.length) { box.innerHTML = '<div class="empty-card">Bu aralıkta veri yok</div>'; return; }
+  const metric = sort === 'count' ? (b => b.count) : (b => b.channel_count);
+  const max = Math.max(...brands.map(metric));
+  box.innerHTML = brands.slice(0, 25).map(b => `
+    <div class="lb-row" onclick="openBrand('${jsq(b.marka)}')">
+      <div class="lb-name">${esc(b.marka)}</div>
+      <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${Math.round((metric(b)/max)*100)}%"></div></div>
+      <div class="lb-meta"><strong>${b.channel_count} kanal</strong> <span>· ${b.count} reklam · ${b.video_count} video</span></div>
+    </div>`).join('');
+}
+
+function setDashDays(days) { state.dashDays = days; loadDashboard(); }
+function setBrandSort(s) { state.brandSort = s; renderBrandLeaderboard();
+  document.querySelectorAll('.section-head .filter-btn').forEach(el =>
+    el.classList.toggle('active', el.textContent.includes(s === 'count' ? 'Reklam' : 'Kanal'))); }
+
+// ─── Tüm Analizler (Son Analizler tam sayfası) ───
+function goAnalyses() {
+  stopLivePolling();
+  state.page = 'analyses';
+  setActiveNav(null);
+  toggleSidebar(false);
+  loadAnalyses();
+}
+
+async function loadAnalyses() {
+  const days = state.analysesDays || 0;
+  const r = await fetch('/api/analyses?days=' + days);
+  const d = await r.json();
+  const vids = d.videos || [];
+  let html = `
+    <div class="page-header">
+      <div>
+        <h1>Tüm Analizler</h1>
+        <div class="subtitle">${vids.length} analiz · analiz tarihine göre</div>
+      </div>
+    </div>
+    ${dateFilterBar(days, 'setAnalysesDays')}`;
+  if (!vids.length) {
+    html += '<div class="empty-card">Bu aralıkta analiz yok</div>';
+  } else {
+    html += `<div class="section">${vids.map(v => `
+      <div class="brand-vid-row" onclick="goVideo('${jsq(v.id)}')">
+        <img class="recent-thumb" style="width:64px;height:36px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
+        <div class="brand-vid-info">
+          <div class="brand-vid-title">${esc(v.title)}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name)} · ${esc((v.analyzed_at||'').slice(0,10))} · ${v.total_frames} kare${(v.top_brands||[]).length ? ' · ' + v.top_brands.map(b=>esc(b[0])).join(', ') : ''}</div>
+        </div>
+        <div class="recent-ads">${v.ad_frame_count} reklam</div>
+      </div>`).join('')}</div>`;
+  }
+  $('main').innerHTML = html;
+}
+
+function setAnalysesDays(days) { state.analysesDays = days; loadAnalyses(); }
+
+function openBrand(name) {
+  stopLivePolling();
+  state.page = 'brand';
+  state.brand = name;
+  setActiveNav(null);
+  loadBrandDetail(name);
+}
+
+async function loadBrandDetail(name) {
+  const r = await fetch('/api/brand/' + encodeURIComponent(name));
+  const d = await r.json();
+  const back = state.channelId
+    ? `<span class="btn sm" style="cursor:pointer" onclick="goChannel('${jsq(state.channelId)}')"><i class="ti ti-arrow-left"></i> Kanal</span>`
+    : `<span class="btn sm" style="cursor:pointer" onclick="goDashboard()"><i class="ti ti-arrow-left"></i> Panel</span>`;
+  let html = `
+    <div class="page-header">
+      <div>
+        <div style="margin-bottom:6px">${back}</div>
+        <h1>${esc(d.marka)}</h1>
+        <div class="subtitle">${d.total} reklam · ${d.channel_count} kanal · ${d.video_count} video</div>
+      </div>
+      <div class="export-bar">
+        <button class="btn" onclick="exportCSV('/api/brand/${encodeURIComponent(name)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
+        <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF / Yazdır</button>
+      </div>
+    </div>`;
+
+  if ((d.timeline || []).length) {
+    const max = Math.max(...d.timeline.map(x => x.count));
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Zaman Trendi</div></div>
+      ${d.timeline.map(x => `
+        <div class="brand-bar-row">
+          <div class="brand-bar-name" style="width:90px;font-family:monospace">${esc(x.date)}</div>
+          <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${Math.round((x.count/max)*100)}%"></div></div>
+          <div class="brand-bar-count">${x.count}</div>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  const vids = d.videos || [];
+  html += `<div class="section"><div class="section-head"><div class="section-title-lg">Göründüğü Videolar (${vids.length})</div></div>
+    ${vids.length ? vids.map(v => `
+      <div class="brand-vid-row" onclick="goVideo('${jsq(v.video_id)}')">
+        <img class="recent-thumb" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
+        <div class="brand-vid-info">
+          <div class="brand-vid-title">${esc(v.title)}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name)} · ${esc((v.analyzed_at||'').slice(0,10))}</div>
+        </div>
+        <div class="recent-ads">${v.count} reklam</div>
+      </div>`).join('') : '<div class="empty-card">Görünüm yok</div>'}
+  </div>`;
+
+  $('main').innerHTML = html;
+}
+
+function exportCSV(url) {
+  window.location.href = url;
+}
+
 async function loadVideo(id) {
+  state.videoId = id;
   const r = await fetch('/api/video/' + encodeURIComponent(id));
   const d = await r.json();
   if (d.error) { $('main').innerHTML = '<div class="empty-card">' + d.error + '</div>'; return; }
@@ -1285,6 +1704,10 @@ async function loadVideo(id) {
         <h1 style="font-size:18px">${esc(v.title)}</h1>
         <div class="subtitle">Süre: ${fmtDur(v.duration)} · ${v.total_frames} frame analiz · ${v.api_calls} API çağrısı</div>
       </div>
+      <div class="export-bar">
+        <button class="btn" onclick="exportCSV('/api/video/${encodeURIComponent(id)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
+        <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF / Yazdır</button>
+      </div>
     </div>
 
     <div class="stat-tiles">
@@ -1294,6 +1717,18 @@ async function loadVideo(id) {
       <div class="stat-tile amber"><div class="stat-tile-num">${Object.keys(v.type_counts || {}).length}</div><div class="stat-tile-lbl">Reklam Türü</div></div>
     </div>
   `;
+
+  // Sürekli ekran öğeleri (kalıcı bindirmeler)
+  const overlays = v.persistent_overlays || [];
+  window._overlays = overlays;
+  if (overlays.length > 0) {
+    html += `<div class="section">
+      <div class="section-head"><div class="section-title-lg">Sürekli Ekran Öğeleri</div></div>
+      <div class="overlay-list">
+        ${overlays.map((o, i) => overlayRow(o, i)).join('')}
+      </div>
+    </div>`;
+  }
 
   // Tür dağılımı
   const typeArr = Object.entries(v.type_counts || {}).map(([name, count]) => ({name, count}));
@@ -1319,6 +1754,15 @@ async function loadVideo(id) {
           <div class="brand-bar-count">${b.count}</div>
         </div>
       `).join('')}
+    </div>`;
+  }
+
+  // Detaylı marka raporu
+  const report = v.brand_report || [];
+  if (report.length > 0) {
+    html += `<div class="section">
+      <div class="section-head"><div class="section-title-lg">Marka Raporu</div></div>
+      ${renderBrandReport(report)}
     </div>`;
   }
 
@@ -1350,6 +1794,187 @@ async function loadVideo(id) {
   window._currentDets = dets;
 }
 
+function overlayRow(o, i) {
+  const pct = Math.round((o.ratio || 0) * 100);
+  const isLogo = o.is_channel_logo;
+  const isSponsor = o.is_main_sponsor;
+  const cls = isLogo ? 'logo' : (isSponsor ? 'mainsponsor' : 'sponsor');
+  const icon = isLogo ? 'ti-shield-check' : (isSponsor ? 'ti-star-filled' : 'ti-ad');
+  let label;
+  if (isLogo) label = 'kanal logosu (reklam sayılmadı)';
+  else if (isSponsor) label = 'ana sponsor (reklam sayıldı)';
+  else label = 'sürekli marka/sponsor (reklam sayıldı)';
+
+  // Aksiyon butonları
+  let actions = '';
+  if (isLogo) {
+    actions = `<span class="overlay-tag">kanal logosu</span>
+      <button class="btn sm" onclick="overlayFlag(${i},'channel_logo',false)"><i class="ti ti-arrow-back-up"></i> Geri al</button>`;
+  } else {
+    actions += `<button class="btn sm" onclick="overlayFlag(${i},'channel_logo',true)"><i class="ti ti-shield"></i> Kanal logosu</button>`;
+    if (isSponsor) {
+      actions += `<span class="overlay-tag star">★ Ana Sponsor</span>`;
+      // Köşe logosunu sayma toggle'ı (sadece gerçek reklamlarını say)
+      if (o.is_active_only) {
+        actions += `<button class="btn sm" style="border-color:var(--green);color:var(--green)" onclick="overlayFlag(${i},'active_only',false)"><i class="ti ti-checkbox"></i> Köşe logosu sayılmıyor</button>`;
+      } else {
+        actions += `<button class="btn sm" onclick="overlayFlag(${i},'active_only',true)"><i class="ti ti-square"></i> Köşe logosunu sayma</button>`;
+      }
+      actions += `<button class="btn sm" onclick="overlayFlag(${i},'main_sponsor',false)"><i class="ti ti-arrow-back-up"></i> Geri al</button>`;
+    } else {
+      actions += `<button class="btn sm" onclick="overlayFlag(${i},'main_sponsor',true)"><i class="ti ti-star"></i> Ana Sponsor</button>`;
+    }
+  }
+
+  return `<div class="overlay-row ${cls}">
+    <i class="ti ${icon}"></i>
+    <div class="overlay-info">
+      <div class="overlay-name">Sürekli <strong>${esc(o.marka)}</strong></div>
+      <div class="overlay-meta">Frame'lerin %${pct}'inde · ${label}</div>
+    </div>
+    <div class="overlay-actions">${actions}</div>
+  </div>`;
+}
+
+function overlayFlag(i, flag, value) {
+  const o = (window._overlays || [])[i];
+  if (o) brandFlag(o.marka, flag, value);
+}
+
+function jsq(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+function renderBrandReport(report) {
+  window._brandReport = report;
+  return report.map((b, i) => {
+    const total = b.appearances;
+    const chips = Object.entries(b.tur_counts || {})
+      .sort((a, c) => c[1] - a[1])
+      .map(([tur, n]) => `<span class="type-chip clickable" title="Sadece bu türü göster" onclick="event.stopPropagation();showBrandFrames(${i},'${jsq(tur)}')">${esc(tur)} ${n}</span>`).join('');
+    const span = b.first_ts === b.last_ts ? esc(b.first_ts)
+               : `${esc(b.first_ts)} → ${esc(b.last_ts)}`;
+    const sponsorBadge = b.is_main_sponsor ? '<span class="overlay-tag star">★ Ana Sponsor</span>' : '';
+    const sponsorBtn = b.is_main_sponsor
+      ? `<button class="brand-act on" title="Ana sponsor işaretini kaldır" onclick="event.stopPropagation();brandReportFlag(${i},'main_sponsor',false)"><i class="ti ti-star-filled"></i></button>`
+      : `<button class="brand-act" title="Ana sponsor yap" onclick="event.stopPropagation();brandReportFlag(${i},'main_sponsor',true)"><i class="ti ti-star"></i></button>`;
+    // Ana sponsorlarda: köşe logosunu sayma toggle'ı
+    const activeOnlyBtn = b.is_main_sponsor
+      ? `<button class="brand-act ${b.is_active_only ? 'on-green' : ''}" title="${b.is_active_only ? 'Köşe logosu sayılmıyor — geri aç' : 'Köşe logosunu sayma (sadece gerçek reklamlar)'}" onclick="event.stopPropagation();brandReportFlag(${i},'active_only',${!b.is_active_only})"><i class="ti ti-eye-off"></i></button>`
+      : '';
+    const logoBtn = `<button class="brand-act" title="Kanal logosu yap (reklamdan çıkar)" onclick="event.stopPropagation();brandReportFlag(${i},'channel_logo',true)"><i class="ti ti-shield"></i></button>`;
+    const renameBtn = `<button class="brand-act" title="Markayı değiştir / birleştir" onclick="event.stopPropagation();brandRename(${i})"><i class="ti ti-pencil"></i></button>`;
+    const removeBtn = `<button class="brand-act danger" title="Reklam değil — tümünü sil" onclick="event.stopPropagation();brandRemove(${i})"><i class="ti ti-trash"></i></button>`;
+    return `<div class="brand-card${b.is_main_sponsor ? ' is-sponsor' : ''}">
+      <div class="brand-card-head" onclick="toggleBrandFrames(${i})">
+        <i class="ti ti-chevron-right brand-caret" id="bcaret-${i}"></i>
+        <div class="brand-card-main">
+          <div class="brand-card-title">
+            <strong class="brand-link" title="Marka panelini aç" onclick="event.stopPropagation();openBrand('${jsq(b.marka)}')">${esc(b.marka)}</strong>
+            <span class="brand-card-count">${total} reklam</span>
+            ${sponsorBadge}
+          </div>
+          <div class="brand-card-chips">${chips}</div>
+        </div>
+        <div class="brand-card-span">${span}</div>
+        <div class="brand-card-acts">${sponsorBtn}${activeOnlyBtn}${logoBtn}${renameBtn}${removeBtn}</div>
+      </div>
+      <div class="brand-frames" id="bframes-${i}" style="display:none"></div>
+    </div>`;
+  }).join('');
+}
+
+function brandReportFlag(i, flag, value) {
+  const b = (window._brandReport || [])[i];
+  if (b) brandFlag(b.marka, flag, value);
+}
+
+async function brandEdit(payload, okMsg) {
+  const r = await fetch(`/api/video/${encodeURIComponent(state.videoId)}/brand-edit`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json();
+  if (d.error) { toast(d.error, 'error'); return; }
+  toast(okMsg, 'success');
+  loadVideo(state.videoId);
+}
+
+function brandRename(i) {
+  const b = (window._brandReport || [])[i];
+  if (!b) return;
+  const yeni = prompt(`"${b.marka}" markasını neyle değiştireyim? (aynı isme yazarsan birleşir)`, b.marka);
+  if (!yeni || !yeni.trim() || yeni.trim() === b.marka) return;
+  brandEdit({action: 'rename', marka: b.marka, new_marka: yeni.trim()}, `"${b.marka}" → "${yeni.trim()}"`);
+}
+
+function brandRemove(i) {
+  const b = (window._brandReport || [])[i];
+  if (!b) return;
+  if (!confirm(`"${b.marka}" tüm karelerden silinecek (reklam değil). Emin misin?`)) return;
+  brandEdit({action: 'remove', marka: b.marka}, `"${b.marka}" reklam listesinden kaldırıldı`);
+}
+
+function renderBframesInto(i, turFilter) {
+  const box = $('bframes-' + i);
+  const caret = $('bcaret-' + i);
+  if (!box) return;
+  const b = (window._brandReport || [])[i];
+  let frames = (b && b.frames) || [];
+  if (turFilter) frames = frames.filter(f => (f.turler || []).includes(turFilter));
+  const header = turFilter
+    ? `<div class="bframe-filter">Filtre: <strong>${esc(turFilter)}</strong> · ${frames.length} kare
+        <button onclick="event.stopPropagation();renderBframesInto(${i},null)">tümünü göster ✕</button></div>`
+    : '';
+  const cards = frames.map(f => `
+    <div class="bframe" onclick="showFrameDetail(${f.index})">
+      <img src="${f.frame_url}" loading="lazy" onerror="this.style.opacity=0.25">
+      <span class="bframe-ts">${esc(f.timestamp)}</span>
+    </div>`).join('') || '<div style="color:var(--dim);font-size:12px;padding:8px">Frame yok</div>';
+  box.innerHTML = header + cards;
+  box.style.display = 'flex';
+  if (caret) caret.className = 'ti ti-chevron-down brand-caret';
+}
+
+function toggleBrandFrames(i) {
+  const box = $('bframes-' + i);
+  const caret = $('bcaret-' + i);
+  if (!box) return;
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    if (caret) caret.className = 'ti ti-chevron-right brand-caret';
+    return;
+  }
+  renderBframesInto(i, null);
+}
+
+function showBrandFrames(i, tur) {
+  renderBframesInto(i, tur);
+}
+
+async function correctDetection(idx, payload) {
+  const r = await fetch(`/api/video/${encodeURIComponent(state.videoId)}/detection/${idx}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json();
+  if (d.error) { toast(d.error, 'error'); return; }
+  toast('Düzeltildi', 'success');
+  closeModal();
+  loadVideo(state.videoId);
+}
+
+async function brandFlag(marka, flag, value) {
+  const r = await fetch(`/api/video/${encodeURIComponent(state.videoId)}/brand-flag`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({marka, flag, value}),
+  });
+  const d = await r.json();
+  if (d.error) { toast(d.error, 'error'); return; }
+  const isLogo = flag === 'channel_logo';
+  const noun = isLogo ? 'kanal logosu' : 'ana sponsor';
+  toast(value ? `"${marka}" ${noun} olarak işaretlendi` : `"${marka}" ${noun} işareti kaldırıldı`, 'success');
+  loadVideo(state.videoId);
+}
+
 function renderDetCards(dets, filter) {
   let filtered = dets;
   if (filter === 'ads') filtered = dets.filter(d => d.reklam_var);
@@ -1366,11 +1991,12 @@ function renderDetCards(dets, filter) {
       ptext = d.guven;
     }
     const brandTags = (d.markalar || []).slice(0, 3).map(b => esc(b)).join(', ');
+    const manualBadge = d.manual_clean ? '<span class="det-manual" title="Manuel düzenlendi"><i class="ti ti-pencil"></i></span>' : '';
     return `<div class="det-card ${cls}" onclick="showFrameDetail(${d.index})">
       <img class="det-thumb" src="${d.frame_url}" loading="lazy" onerror="this.style.opacity=0.3">
       <div class="det-body">
         <div class="det-row">
-          <span class="det-ts">${d.timestamp}</span>
+          <span class="det-ts">${d.timestamp} ${manualBadge}</span>
           <span class="det-pill ${pcls}">${ptext}</span>
         </div>
         <div class="det-sum">${esc(d.ozet || '')}</div>
@@ -1402,43 +2028,76 @@ function showFrameDetail(idx) {
   }
   if (d.tespitler && d.tespitler.length) {
     body += `<div style="font-size:12px;color:var(--dim);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">Tespitler</div>`;
-    d.tespitler.forEach(t => {
-      body += `<div style="background:var(--bg2);border-radius:6px;padding:8px;margin-top:6px;font-size:12px">
-        <strong>${esc(t.tur || '-')}</strong>
-        ${t.marka ? ' · <span style="color:var(--accent)">' + esc(t.marka) + '</span>' : ''}
-        ${t.konum ? '<div style="color:var(--dim);margin-top:2px">' + esc(t.konum) + '</div>' : ''}
-        ${t.detay ? '<div style="margin-top:3px">' + esc(t.detay) + '</div>' : ''}
+    d.tespitler.forEach((t, i) => {
+      body += `<div style="background:var(--bg2);border-radius:6px;padding:8px;margin-top:6px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
+        <div>
+          <strong>${esc(t.tur || '-')}</strong>
+          ${t.marka ? ' · <span style="color:var(--accent)">' + esc(t.marka) + '</span>' : ''}
+          ${t.konum ? '<div style="color:var(--dim);margin-top:2px">' + esc(t.konum) + '</div>' : ''}
+          ${t.detay ? '<div style="margin-top:3px">' + esc(t.detay) + '</div>' : ''}
+        </div>
+        <button class="tespit-del" title="Bu tespiti sil (yanlış)" onclick="correctDetection(${idx}, {action:'remove_tespit', tespit_index:${i}})"><i class="ti ti-x"></i></button>
       </div>`;
     });
   }
   body += `</div>`;
+  if (d.reklam_var) {
+    body += `<button class="btn full" style="margin-top:12px;color:var(--red);border-color:var(--red)" onclick="correctDetection(${idx}, {action:'mark_clean'})">
+      <i class="ti ti-flag-off"></i> Bu kare reklam değil — temizle
+    </button>`;
+  }
+  // Manuel reklam ekleme formu (kaçırılan reklamı el ile işaretle)
+  const TURLER = ['Alt Bant','Köşe Banner','Video Reklam','Pre-Roll','Mid-Roll','Sponsor Bandı','Ürün Yerleştirme','Geçiş Karesi','Arka Plan'];
+  const KONUMLAR = ['sağ üst','sol üst','sağ alt','sol alt','alt orta','üst orta','merkez','tam ekran'];
+  body += `
+    <button class="btn full" style="margin-top:8px" onclick="toggleAddAd()">
+      <i class="ti ti-plus"></i> Manuel reklam ekle
+    </button>
+    <div id="addAdForm" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+      <div class="add-field"><label>Marka</label>
+        <input id="aa-marka" type="text" placeholder="Örn: Üstad"></div>
+      <div class="add-field"><label>Tür</label>
+        <select id="aa-tur">${TURLER.map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>
+      <div class="add-field"><label>Konum</label>
+        <select id="aa-konum"><option value="">—</option>${KONUMLAR.map(k=>`<option value="${k}">${k}</option>`).join('')}</select></div>
+      <div class="add-field"><label>Açıklama (ops.)</label>
+        <input id="aa-detay" type="text" placeholder="kısa not"></div>
+      <button class="btn primary full" style="margin-top:6px" onclick="addAdFromModal(${idx})">
+        <i class="ti ti-check"></i> Reklam olarak ekle
+      </button>
+    </div>`;
   $('modalBody').innerHTML = body;
   $('modal').classList.add('on');
+}
+
+function toggleAddAd() {
+  const f = $('addAdForm');
+  if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function addAdFromModal(idx) {
+  const marka = ($('aa-marka').value || '').trim();
+  const detay = ($('aa-detay').value || '').trim();
+  if (!marka && !detay) { toast('En az marka veya açıklama girin', 'error'); return; }
+  await correctDetection(idx, {
+    action: 'add_tespit',
+    marka,
+    tur: $('aa-tur').value,
+    konum: $('aa-konum').value,
+    detay,
+  });
 }
 
 function closeModal() { $('modal').classList.remove('on'); }
 
 // ─── Sidebar recent videos ───
 async function loadRecentSidebar() {
+  // Liste artık "Tüm Analizler" tam sayfasında; sidebar'da sadece toplam sayı rozeti.
   try {
-    const r = await fetch('/api/recent-videos');
+    const r = await fetch('/api/analyses');
     const d = await r.json();
-    const list = $('recentList');
-    if (!list) return;
-    if (!d.videos || d.videos.length === 0) {
-      list.innerHTML = '<div style="font-size:10px;color:var(--dimmer);padding:4px 8px">Henüz analiz yok</div>';
-      return;
-    }
-    list.innerHTML = d.videos.map(v => `
-      <div class="recent-item" onclick="goVideo('${esc(v.id)}')">
-        <img class="recent-thumb" src="${esc(v.thumbnail || '')}" onerror="this.style.opacity=0.2">
-        <div class="recent-info">
-          <div class="recent-title">${esc((v.title || '').slice(0, 28))}</div>
-          <div class="recent-ch">${esc(v.channel_name || '')}</div>
-        </div>
-        <div class="recent-ads">${v.ad_frame_count}</div>
-      </div>
-    `).join('');
+    const badge = $('recentCount');
+    if (badge) badge.textContent = (d.videos && d.videos.length) ? d.videos.length : '';
   } catch (e) {}
 }
 

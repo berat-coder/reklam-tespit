@@ -1,0 +1,3 @@
+# Railway/Nixpacks — sistem ffmpeg'i kur (hızlı frame çıkarımı ve yt-dlp için gerekli)
+[phases.setup]
+aptPkgs = ["ffmpeg"]

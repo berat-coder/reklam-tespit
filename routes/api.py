@@ -1,11 +1,32 @@
-from flask import Blueprint, request, jsonify
+import io
+import csv
+from datetime import datetime, timedelta
+
+from flask import Blueprint, request, jsonify, Response
 
 from config import load_config, save_config
 from services.youtube import fetch_channel_videos, channel_id_from_url, has_cookies
 from services.job_manager import JOB_MANAGER
 from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
+    update_detection, recompute_video_aggregates, set_channel_brand_flag,
+    edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
 )
+from services.aggregates import compute_aggregates
+
+
+def _csv_response(filename, header, rows):
+    """UTF-8 BOM'lu CSV indirme yanıtı (Excel Türkçe karakter için)."""
+    buf = io.StringIO()
+    buf.write("﻿")
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 api_bp = Blueprint("api", __name__)
 
@@ -124,6 +145,103 @@ def channel_detail(ch_id=None):
     })
 
 
+# ── Sponsorluk İstihbarat Paneli ───────────────────────────────────────────────
+
+def _since_from_days():
+    """?days=N → o kadar gün öncesinin ISO tarihi; 0/yok → None (tümü)."""
+    try:
+        days = int(request.args.get("days", 0))
+    except (TypeError, ValueError):
+        days = 0
+    if days <= 0:
+        return None
+    return (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+
+@api_bp.route("/api/dashboard")
+def dashboard():
+    return jsonify(get_dashboard_data(since=_since_from_days()))
+
+
+@api_bp.route("/api/brand/<path:name>")
+def brand_detail(name):
+    return jsonify(get_brand_appearances(name))
+
+
+@api_bp.route("/api/analyses")
+def analyses():
+    """Tüm tamamlanmış analizler (tarih filtreli) — 'Son Analizler' tam sayfası."""
+    since = _since_from_days()
+    videos = get_all_videos(completed_only=True)
+    out = []
+    for v in videos:
+        if since and (v.get("analyzed_at") or "") < since:
+            continue
+        out.append({
+            "id": v["id"], "title": v["title"], "thumbnail": v["thumbnail"],
+            "channel_id": v["channel_id"], "channel_name": v.get("channel_name", ""),
+            "channel_avatar": v.get("channel_avatar", ""),
+            "analyzed_at": v["analyzed_at"], "ad_frame_count": v["ad_frame_count"],
+            "total_frames": v["total_frames"], "duration": v["duration"],
+            "top_brands": sorted((v.get("brand_counts") or {}).items(),
+                                 key=lambda x: -x[1])[:3],
+        })
+    return jsonify({"videos": out})
+
+
+# ── Dışa aktarma (CSV) ─────────────────────────────────────────────────────────
+
+@api_bp.route("/api/video/<video_id>/export.csv")
+def export_video_csv(video_id):
+    v = get_video(video_id)
+    if not v:
+        return jsonify({"error": "Video bulunamadı"}), 404
+    ch = get_channel(v["channel_id"]) or {}
+    agg = compute_aggregates(get_detections(video_id), ch.get("channel_logos", []),
+                             ch.get("main_sponsors", []), ch.get("sponsor_active_only", []))
+    rows = [[
+        b["marka"], b["appearances"], b["frame_count"],
+        " / ".join(f"{t}:{n}" for t, n in (b.get("tur_counts") or {}).items()),
+        b.get("first_ts", ""), b.get("last_ts", ""), b.get("max_guven", ""),
+    ] for b in agg["brand_report"]]
+    return _csv_response(
+        f"rapor_{video_id}.csv",
+        ["Marka", "Görünüm", "Kare", "Türler", "İlk", "Son", "Güven"], rows)
+
+
+@api_bp.route("/api/channel/<path:ch_id>/export.csv")
+def export_channel_csv(ch_id):
+    videos = get_channel_videos(ch_id)
+    brand_totals = {}
+    for v in videos:
+        for marka, count in (v.get("brand_counts") or {}).items():
+            brand_totals[marka] = brand_totals.get(marka, 0) + count
+    rows = [[m, c] for m, c in sorted(brand_totals.items(), key=lambda x: -x[1])]
+    ch = get_channel(ch_id) or {}
+    safe = (ch.get("name") or ch_id).replace(" ", "_")
+    return _csv_response(f"kanal_{safe}.csv", ["Marka", "Toplam Reklam"], rows)
+
+
+@api_bp.route("/api/brand/<path:name>/export.csv")
+def export_brand_csv(name):
+    data = get_brand_appearances(name)
+    rows = [[v["channel_name"], v["title"], v["count"], (v.get("analyzed_at") or "")[:10]]
+            for v in data["videos"]]
+    safe = (data["marka"] or name).replace(" ", "_").replace("/", "-")
+    return _csv_response(f"marka_{safe}.csv",
+                         ["Kanal", "Video", "Reklam Sayısı", "Tarih"], rows)
+
+
+@api_bp.route("/api/dashboard/export.csv")
+def export_dashboard_csv():
+    data = get_dashboard_data(since=_since_from_days())
+    rows = [[b["marka"], b["count"], b["channel_count"], b["video_count"]]
+            for b in sorted(data["top_brands"],
+                            key=lambda x: (-x["channel_count"], -x["count"]))]
+    return _csv_response("panel_markalar.csv",
+                         ["Marka", "Toplam Reklam", "Kanal Sayısı", "Video Sayısı"], rows)
+
+
 @api_bp.route("/api/channel/<path:ch_id>/browse")
 @api_bp.route("/api/channel-browse")
 def channel_browse(ch_id=None):
@@ -209,10 +327,84 @@ def video_detail(video_id):
         return jsonify({"error": "Video bulunamadı"}), 404
     ch = get_channel(v["channel_id"]) or {}
     detections = get_detections(video_id)
+    # brand_report + güncel bayraklar → okurken hesaplanır (canlı, kayıttan bağımsız)
+    agg = compute_aggregates(detections, ch.get("channel_logos", []),
+                             ch.get("main_sponsors", []),
+                             ch.get("sponsor_active_only", []))
     return jsonify({
-        "video": {**v, "detections": detections},
-        "channel": {"id": v["channel_id"], "name": ch.get("name", "")},
+        "video": {
+            **v,
+            "detections": detections,
+            "brand_report": agg["brand_report"],
+            "persistent_overlays": agg["persistent_overlays"],
+        },
+        "channel": {
+            "id": v["channel_id"],
+            "name": ch.get("name", ""),
+            "channel_logos": ch.get("channel_logos", []),
+            "main_sponsors": ch.get("main_sponsors", []),
+            "sponsor_active_only": ch.get("sponsor_active_only", []),
+        },
     })
+
+
+@api_bp.route("/api/video/<video_id>/detection/<int:index>", methods=["POST"])
+def correct_detection(video_id, index):
+    """Manuel düzeltme: mark_clean | remove_tespit | remove_brand."""
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    try:
+        update_detection(
+            video_id, index, action,
+            tespit_index=data.get("tespit_index"),
+            marka=data.get("marka"),
+            tur=data.get("tur"),
+            konum=data.get("konum"),
+            detay=data.get("detay"),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    agg = recompute_video_aggregates(video_id)
+    return jsonify({"ok": True, **(agg or {})})
+
+
+@api_bp.route("/api/video/<video_id>/brand-flag", methods=["POST"])
+def brand_flag(video_id):
+    """Markayı kanal logosu / ana sponsor olarak işaretler veya geri alır.
+    body: {marka, flag: 'channel_logo'|'main_sponsor', value: true|false}"""
+    data = request.get_json() or {}
+    marka = (data.get("marka") or "").strip()
+    flag = data.get("flag")
+    value = bool(data.get("value", True))
+    if flag not in ("channel_logo", "main_sponsor", "active_only"):
+        return jsonify({"error": "Geçersiz flag"}), 400
+    v = get_video(video_id)
+    if not v:
+        return jsonify({"error": "Video bulunamadı"}), 404
+    try:
+        set_channel_brand_flag(v["channel_id"], marka, flag, value)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    agg = recompute_video_aggregates(video_id)
+    return jsonify({"ok": True, **(agg or {})})
+
+
+@api_bp.route("/api/video/<video_id>/brand-edit", methods=["POST"])
+def brand_edit(video_id):
+    """Bir markayı TÜM karelerde yeniden adlandırır veya kaldırır (reklam değil).
+    body: {action: 'rename'|'remove', marka, new_marka?}"""
+    data = request.get_json() or {}
+    action = data.get("action")
+    if action not in ("rename", "remove"):
+        return jsonify({"error": "Geçersiz action"}), 400
+    if not get_video(video_id):
+        return jsonify({"error": "Video bulunamadı"}), 404
+    try:
+        edit_brand_global(video_id, action, data.get("marka"), data.get("new_marka"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    agg = recompute_video_aggregates(video_id)
+    return jsonify({"ok": True, **(agg or {})})
 
 
 # ── Tarama / Analiz ───────────────────────────────────────────────────────────

@@ -5,16 +5,22 @@ ve thread worker'lardan (process_video_sync / process_channel_scan_sync) çağr�
 """
 
 import re
-import base64
 import time
-import uuid
+import base64
+import shutil
+import subprocess
 from datetime import datetime
 
 import cv2
 import numpy as np
 
-from config import load_config, FRAMES_DIR
-from services.gemini import gemini_analyze_frame, gemini_extract_brands
+from config import (
+    load_config, FRAMES_DIR,
+    FRAME_INTERVAL, FRAME_WIDTH, BATCH_SIZE,
+    SCENE_DIFF_THRESHOLD, LOWER_BAND_THRESHOLD,
+)
+from services.gemini import gemini_analyze_batch, gemini_extract_brands
+from services.aggregates import compute_aggregates, suggest_channel_logos
 from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from_url
 from models.database import (
     upsert_channel, upsert_video, save_detections,
@@ -54,6 +60,162 @@ def _lower_diff(f1, f2):
         return float(np.mean(cv2.absdiff(r1, r2))) / 255.0
     except Exception:
         return 1.0
+
+
+def _b64_file(path):
+    with open(path, "rb") as fh:
+        return base64.b64encode(fh.read()).decode()
+
+
+# ── Frame çıkarımı ──────────────────────────────────────────────────────────────
+
+def _ffmpeg_seek_frame(stream_url, out_path, t, width):
+    """Tek bir zaman noktasından `-ss` (input seek = HTTP range) ile 1 frame çeker.
+    Tüm videoyu indirmez — sadece o anın etrafındaki birkaç KB'ı indirir."""
+    cmd = [
+        "ffmpeg", "-nostdin", "-loglevel", "error",
+        "-ss", str(t), "-i", stream_url,
+        "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4",
+        "-y", str(out_path),
+    ]
+    try:
+        subprocess.run(cmd, timeout=90,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
+    except Exception:
+        return None
+
+
+def _extract_frames_ffmpeg_linear(stream_url, frames_dir, interval, width,
+                                  expected=0, on_progress=None, cancel_check=None):
+    """Süre bilinmiyorsa (ör. canlı yayın) yedek: tek geçiş fps filtresiyle çıkarır."""
+    cmd = [
+        "ffmpeg", "-nostdin", "-loglevel", "error", "-an",
+        "-i", stream_url,
+        "-vf", f"fps=1/{interval},scale={width}:-2",
+        "-q:v", "4",
+        str(frames_dir / "frame_%04d.jpg"),
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    start = time.monotonic()
+    while proc.poll() is None:
+        time.sleep(1.5)
+        if cancel_check and cancel_check():
+            proc.kill()
+            return []
+        if time.monotonic() - start > 1800:
+            proc.kill()
+            break
+        if on_progress:
+            on_progress(len(list(frames_dir.glob("frame_*.jpg"))), expected)
+    out = []
+    for p in sorted(frames_dir.glob("frame_*.jpg")):
+        m = re.search(r"frame_(\d+)\.jpg", p.name)
+        n = int(m.group(1)) if m else len(out) + 1
+        out.append((p, (n - 1) * interval))
+    return out
+
+
+def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
+                           expected=0, on_progress=None, cancel_check=None):
+    """Her örnek noktasına PARALEL `-ss` seek ile frame çıkarır — çok hızlı,
+    sadece gerekli byte'ları indirir. Süre yoksa lineer fps yöntemine düşer.
+    Döner: [(Path, ts_saniye), ...]"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not duration or duration <= 0:
+        return _extract_frames_ffmpeg_linear(
+            stream_url, frames_dir, interval, width,
+            expected=expected, on_progress=on_progress, cancel_check=cancel_check)
+
+    timestamps = list(range(0, int(duration), interval))
+    if not timestamps:
+        timestamps = [0]
+    results = [None] * len(timestamps)
+    done = 0
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {}
+        for idx, t in enumerate(timestamps):
+            out_path = frames_dir / f"frame_{idx + 1:04d}.jpg"
+            futs[ex.submit(_ffmpeg_seek_frame, stream_url, out_path, t, width)] = (idx, t)
+        for fut in as_completed(futs):
+            idx, t = futs[fut]
+            p = fut.result()
+            if p:
+                results[idx] = (p, t)
+            done += 1
+            if on_progress:
+                on_progress(done, len(timestamps))
+            if cancel_check and cancel_check():
+                break
+
+    return [r for r in results if r]
+
+
+def _extract_frames_opencv(stream_url, frames_dir, interval, width):
+    """ffmpeg yoksa yedek: OpenCV ile seek ederek frame çıkarır."""
+    cap = cv2.VideoCapture(stream_url)
+    if not cap.isOpened():
+        return []
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    frame_step = max(1, int(fps * interval))
+    out = []
+    current, n = 0, 0
+    while True:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, current)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        ts = current / fps if fps > 0 else n * interval
+        fh, fw = frame.shape[:2]
+        if fw > width:
+            frame = cv2.resize(frame, (width, int(fh * width / fw)))
+        p = frames_dir / f"frame_{n + 1:04d}.jpg"
+        cv2.imwrite(str(p), frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        out.append((p, ts))
+        n += 1
+        current += frame_step
+    cap.release()
+    return out
+
+
+def _extract_frames(stream_url, frames_dir, interval, width, duration=0,
+                    expected=0, on_progress=None, cancel_check=None):
+    if shutil.which("ffmpeg"):
+        try:
+            res = _extract_frames_ffmpeg(stream_url, frames_dir, interval, width,
+                                         duration=duration, expected=expected,
+                                         on_progress=on_progress,
+                                         cancel_check=cancel_check)
+            if res:
+                return res
+            print("[VIDEO] ffmpeg 0 frame döndü, opencv'ye düşülüyor")
+        except Exception as e:
+            print(f"[VIDEO] ffmpeg başarısız ({e}), opencv'ye düşülüyor")
+    return _extract_frames_opencv(stream_url, frames_dir, interval, width)
+
+
+def _select_candidates(frames_data):
+    """Sahne kümeleme + alt-bant yükseltici ile Gemini'ye gönderilecek frame'leri seçer.
+    Döner: (candidate_indices, rep_of) — rep_of[i] = i'nin sonucunu miras alacağı aday index'i."""
+    candidates = []
+    rep_of = {}
+    rep_idx, rep_img, prev_img = None, None, None
+    for fd in frames_data:
+        i, img = fd["index"], fd["img"]
+        if rep_idx is None:
+            is_cand = True
+        else:
+            scene_change = _frame_diff(prev_img, img) >= SCENE_DIFF_THRESHOLD
+            band_change = _lower_diff(rep_img, img) >= LOWER_BAND_THRESHOLD
+            is_cand = scene_change or band_change
+        if is_cand:
+            candidates.append(i)
+            rep_idx, rep_img = i, img
+        rep_of[i] = rep_idx
+        prev_img = img
+    return candidates, rep_of
 
 
 # ── Kanal tarama ──────────────────────────────────────────────────────────────
@@ -236,7 +398,8 @@ def _analyze_video_core(
     on_set_live(desc_brands=desc_brands, channel_logos=channel_logos,
                 message="Stream URL alınıyor...")
 
-    # 3. Stream URL
+    # 3. Stream URL — düşük çözünürlük yeterli (640px'e küçültüyoruz) ve çok daha
+    #    hızlı decode olur. H.264 mp4 tercih → AV1/VP9'dan kat kat hızlı.
     status(f"Stream alınıyor: {title[:40]}")
     stream_url = None
     try:
@@ -244,6 +407,10 @@ def _analyze_video_core(
             "skip_download": True,
             "noplaylist": True,
             "ignore_no_formats_error": True,
+            "format": (
+                "bv*[height<=480][vcodec^=avc]/b[height<=480][vcodec^=avc]/"
+                "bv*[height<=480]/b[height<=480]/worst[vcodec!=none]/worst"
+            ),
         })) as ydl:
             si = ydl.extract_info(url, download=False)
 
@@ -273,151 +440,141 @@ def _analyze_video_core(
         on_set_live(status="error", message="Stream URL bulunamadı", progress=0)
         return
 
-    # 4. Frame analizi
-    cap = cv2.VideoCapture(stream_url)
-    if not cap.isOpened():
-        status("Video açılamadı")
-        return
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25
-    total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    vid_duration = total_f / fps if fps > 0 else duration or 60
-    interval = 8
-    frame_step = max(1, int(fps * interval))
-    total_steps = max(1, int(vid_duration / interval))
-
+    # 4. Frame çıkarımı — tek geçiş ffmpeg (yedek: opencv)
+    interval = FRAME_INTERVAL
     job_frames_dir = FRAMES_DIR / video_id
     job_frames_dir.mkdir(exist_ok=True)
 
-    current_frame = 0
+    expected_frames = max(1, int((duration or 0) / interval)) if duration else 0
+    status(f"Frame'ler çıkarılıyor: {title[:35]}")
+    on_set_live(status="extracting", message="Frame'ler çıkarılıyor...",
+                total_steps=expected_frames, progress=0)
+
+    def _extract_progress(n, total):
+        pct = round(min(25, (n / total) * 25), 1) if total else 0
+        on_set_live(status="extracting",
+                    progress=pct, current_frame=n, total_frames=n,
+                    total_steps=total or n,
+                    message=f"Frame çıkarılıyor: {n}" + (f"/{total}" if total else ""))
+        if on_status:
+            on_status(f"Frame çıkarılıyor: {n}/{total or '?'}")
+
+    try:
+        frame_files = _extract_frames(
+            stream_url, job_frames_dir, interval, FRAME_WIDTH,
+            duration=duration, expected=expected_frames,
+            on_progress=_extract_progress, cancel_check=cancel_check,
+        )
+    except Exception as e:
+        status(f"Frame çıkarma hatası: {e}")
+        on_set_live(status="error", message=str(e), progress=0)
+        return
+
+    if cancel_check():
+        return
+
+    # Diff/ön-filtre için frame'leri belleğe yükle
+    frames_data = []
+    for idx, (path, ts) in enumerate(frame_files):
+        img = cv2.imread(str(path))
+        if img is None:
+            continue
+        frames_data.append({"index": idx, "path": path, "ts": ts, "img": img})
+
+    total_frames = len(frames_data)
+    if total_frames == 0:
+        status("Frame çıkarılamadı — video erişilemiyor olabilir")
+        on_set_live(status="error", message="Frame çıkarılamadı", progress=0)
+        return
+
+    # 5. Sahne kümeleme + alt-bant yükseltici — sadece adayları Gemini'ye gönder
+    candidate_indices, rep_of = _select_candidates(frames_data)
+    candidate_set = set(candidate_indices)
+    status(f"{total_frames} kare · {len(candidate_indices)} aday "
+           f"(sahne+bant filtresi sonrası)")
+    on_set_live(total_steps=total_frames, total_frames=0,
+                message=f"{total_frames} kare · {len(candidate_indices)} analiz edilecek")
+
     analyzed = 0
     api_calls = 0
     detections = []
     ad_appearances = {}
-    last_frame = None
-    last_result = None
+    results = {}      # frame index -> gemini sonucu
+    emit_pos = 0
 
-    while True:
-        if cancel_check():
-            cap.release()
-            return
+    def flush_ready(final=False):
+        nonlocal emit_pos
+        while emit_pos < total_frames:
+            fd = frames_data[emit_pos]
+            rep = rep_of[fd["index"]]
+            if rep not in results:
+                break
+            res = results[rep]
 
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
-        ret, frame = cap.read()
-        if not ret:
-            break
+            filtered = []
+            for t in res.get("tespitler", []):
+                norm = _normalize_brand(t.get("marka", "")) + "|" + (t.get("tur", "") or "")
+                if len(ad_appearances.get(norm, [])) < 3:
+                    filtered.append(t)
+                    ad_appearances.setdefault(norm, []).append(fd["index"])
 
-        ts = current_frame / fps if fps > 0 else analyzed * interval
-        ts_str = _fmt_ts(ts)
-        frame_filename = f"frame_{analyzed:04d}_{int(ts)}s.jpg"
-        cv2.imwrite(str(job_frames_dir / frame_filename), frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, 78])
-
-        # Skip API if frame is nearly identical AND last result was a clean API call
-        last_reliable = last_result is not None and not last_result.get("_skipped")
-        skip_api = (
-            last_frame is not None
-            and last_reliable
-            and _frame_diff(last_frame, frame) < 0.03
-            and _lower_diff(last_frame, frame) < 0.04
-        )
-
-        if skip_api:
-            result = {
-                "reklam_var": last_result.get("reklam_var", False),
-                "guven": last_result.get("guven", "Orta"),
-                "markalar": last_result.get("markalar", []),
-                "tespitler": last_result.get("tespitler", []),
-                "ozet": "[Önceki frame ile aynı]",
+            detection = {
+                "index": fd["index"],
+                "timestamp": _fmt_ts(fd["ts"]),
+                "seconds": round(fd["ts"], 1),
+                "frame_url": f"/frames/{video_id}/{fd['path'].name}",
+                "reklam_var": res.get("reklam_var", False),
+                "guven": res.get("guven", "Düşük"),
+                "markalar": res.get("markalar", []),
+                "tespitler": filtered,
+                "ozet": res.get("ozet", ""),
+                "_api_used": fd["index"] in candidate_set,
             }
-        else:
-            fh, fw = frame.shape[:2]
-            fs = cv2.resize(frame, (720, int(fh * 720 / fw))) if fw > 720 else frame
-            _, buf = cv2.imencode(".jpg", fs, [cv2.IMWRITE_JPEG_QUALITY, 88])
-            b64 = base64.b64encode(buf.tobytes()).decode()
-            result = gemini_analyze_frame(api_key, b64, channel_logos, desc_brands, ts_str)
-            api_calls += 1
-            # Only update last_result if the call succeeded (not rate-limited)
-            if not result.get("_skipped"):
-                last_result = result
-            time.sleep(8)   # gemini-2.5-flash free tier: 10 RPM → ≥6s between calls
+            detections.append(detection)
+            on_add_detection(detection)
+            emit_pos += 1
 
-        last_frame = frame
+    # 6. Batch'ler hâlinde Gemini analizi
+    for b in range(0, len(candidate_indices), BATCH_SIZE):
+        if cancel_check():
+            return
+        chunk = candidate_indices[b:b + BATCH_SIZE]
+        batch_frames = [{
+            "index": ci,
+            "timestamp": _fmt_ts(frames_data[ci]["ts"]),
+            "b64": _b64_file(frames_data[ci]["path"]),
+        } for ci in chunk]
 
-        # Duplicate suppression — same brand+type capped at 3 appearances
-        filtered = []
-        for t in result.get("tespitler", []):
-            norm = _normalize_brand(t.get("marka", "")) + "|" + (t.get("tur", "") or "")
-            appearances = ad_appearances.get(norm, [])
-            if len(appearances) < 3:
-                filtered.append(t)
-                ad_appearances.setdefault(norm, []).append(analyzed)
+        results.update(gemini_analyze_batch(api_key, batch_frames,
+                                            channel_logos, desc_brands))
+        api_calls += 1
+        flush_ready()
 
-        # reklam_var = True if Gemini said so — don't require filtered detections
-        # (Gemini may set reklam_var=true even with empty tespitler list)
-        detection = {
-            "index": analyzed,
-            "timestamp": ts_str,
-            "seconds": round(ts, 1),
-            "frame_url": f"/frames/{video_id}/{frame_filename}",
-            "reklam_var": result.get("reklam_var", False),
-            "guven": result.get("guven", "Düşük"),
-            "markalar": result.get("markalar", []),
-            "tespitler": filtered,
-            "ozet": result.get("ozet", ""),
-            "_api_used": not skip_api,
-        }
-        detections.append(detection)
-        on_add_detection(detection)
-
-        analyzed += 1
-        current_frame += frame_step
-        msg = f"{title[:35]} · Frame {analyzed}/{total_steps} · API: {api_calls} · {ts_str}"
+        msg = (f"{title[:35]} · {emit_pos}/{total_frames} kare · "
+               f"API: {api_calls} · {len(candidate_indices)} aday")
         status(msg)
         on_set_live(
             status="analyzing",
-            progress=round(min(95, (analyzed / total_steps) * 95), 1),
+            progress=round(min(95, 25 + (emit_pos / total_frames) * 70), 1),
             api_calls=api_calls,
-            total_frames=analyzed,
-            current_frame=analyzed,
-            total_steps=total_steps,
-            message=f"Frame {analyzed}/{total_steps} · {ts_str}",
+            total_frames=emit_pos,
+            current_frame=emit_pos,
+            total_steps=total_frames,
+            message=f"{emit_pos}/{total_frames} kare · {api_calls} API çağrısı",
         )
 
-    cap.release()
+    flush_ready(final=True)
+    analyzed = len(detections)
 
-    # ── Kanal logosu öğrenme ──
-    appearance_counts = {}
-    for d in detections:
-        for t in d.get("tespitler", []):
-            marka = t.get("marka", "").strip()
-            if not marka:
-                continue
-            tur = (t.get("tur", "") or "").lower()
-            konum = (t.get("konum", "") or "").lower()
-            if "köşe" in tur or "logo" in tur or "üst" in konum or "alt" in konum:
-                appearance_counts[marka] = appearance_counts.get(marka, 0) + 1
-
-    threshold = max(3, analyzed * 0.30)
-    new_logos = [
-        m for m, c in appearance_counts.items()
-        if c >= threshold and m not in channel_logos
-    ]
+    # ── Kanal logosu öğrenme (ortak modül) ──
+    new_logos = suggest_channel_logos(detections, channel_logos, analyzed)
     if new_logos:
         updated_logos = list(dict.fromkeys(channel_logos + new_logos))
         update_channel_logos(channel_id, updated_logos)
+        channel_logos = updated_logos
 
-    # ── Özet ve kayıt ──
-    ad_detections = [d for d in detections if d["reklam_var"]]
-    type_counts = {}
-    brand_counts = {}
-    for d in ad_detections:
-        for t in d.get("tespitler", []):
-            tur = t.get("tur", "Bilinmiyor")
-            type_counts[tur] = type_counts.get(tur, 0) + 1
-            marka = t.get("marka", "").strip()
-            if marka:
-                brand_counts[marka] = brand_counts.get(marka, 0) + 1
+    # ── Özet ve kayıt (ortak agregat modülü) ──
+    agg = compute_aggregates(detections, channel_logos)
 
     upsert_video(
         video_id=video_id,
@@ -429,17 +586,18 @@ def _analyze_video_core(
         analyzed_at=datetime.utcnow().isoformat(),
         total_frames=analyzed,
         api_calls=api_calls,
-        ad_frame_count=len(ad_detections),
-        type_counts=type_counts,
-        brand_counts=brand_counts,
+        ad_frame_count=agg["ad_frame_count"],
+        type_counts=agg["type_counts"],
+        brand_counts=agg["brand_counts"],
+        persistent_overlays=agg["persistent_overlays"],
         desc_brands=desc_brands,
         completed=True,
     )
     save_detections(video_id, detections)
 
-    msg = f"✓ Tamamlandı: {title[:35]} · {len(ad_detections)} reklam"
+    msg = f"✓ Tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam"
     status(msg)
     on_set_live(
         status="completed", progress=100,
-        message=f"Tamamlandı — {len(ad_detections)} reklam tespit",
+        message=f"Tamamlandı — {agg['ad_frame_count']} reklam tespit",
     )

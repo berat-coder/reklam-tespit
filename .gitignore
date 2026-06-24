@@ -20,5 +20,8 @@ cookies.txt
 .idea/
 *.swp
 
+# Yerel araçlar (Claude Code)
+.claude/
+
 # Heroku
 .heroku/
