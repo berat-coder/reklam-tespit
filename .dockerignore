@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.claude/
+__pycache__/
+*.pyc
+.venv/
+venv/
+data.db
+data.json
+frames/
+cookies.txt
+config.json
+*.md
