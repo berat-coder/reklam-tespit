@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).parent
-FRAMES_DIR = BASE_DIR / "frames"
+# Kalıcı veri dizini (Docker volume için DATA_DIR ile override edilebilir).
+DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+FRAMES_DIR = DATA_DIR / "frames"
 FRAMES_DIR.mkdir(exist_ok=True)
 
 # Görüntü tespit modeli. ÜCRETSIZ KATMAN günlük istek (RPD) kotaları:
@@ -82,7 +85,7 @@ DEFAULT_CHANNELS = [
     "https://www.youtube.com/@yagosabuncuoglu",
 ]
 
-_CONFIG_FILE = BASE_DIR / "config.json"
+_CONFIG_FILE = DATA_DIR / "config.json"
 
 
 def load_config():

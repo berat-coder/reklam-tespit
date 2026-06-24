@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "80:5001"          # sunucunun 80 portu → uygulama
+    environment:
+      - DATA_DIR=/data
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - YOUTUBE_COOKIES=${YOUTUBE_COOKIES}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      - GEMINI_RPM=${GEMINI_RPM:-15}
+    volumes:
+      - app-data:/data
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    environment:
+      - DATA_DIR=/data
+      - REDIS_URL=redis://redis:6379
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - YOUTUBE_COOKIES=${YOUTUBE_COOKIES}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      - GEMINI_RPM=${GEMINI_RPM:-15}
+    volumes:
+      - app-data:/data     # frame'ler worker'da üretilir, web ile paylaşılır
+    depends_on:
+      - redis
+
+volumes:
+  app-data:
+  redis-data:

@@ -3,7 +3,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data.db"
+import os
+DB_PATH = Path(os.environ.get("DATA_DIR", Path(__file__).parent.parent)) / "data.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
