@@ -222,22 +222,24 @@ def _select_candidates(frames_data):
 
 # ── Kanal tarama ──────────────────────────────────────────────────────────────
 
-def process_channel_scan_rq(channel_url, last_hours=24):
+def process_channel_scan_rq(channel_url, last_hours=24, content_type="all"):
     """RQ worker'dan çağrılır. Kanalı tarayıp videoları sıraya ekler."""
     from services.job_manager import JOB_MANAGER
-    _do_channel_scan(channel_url, last_hours, JOB_MANAGER)
+    _do_channel_scan(channel_url, last_hours, JOB_MANAGER, content_type)
 
 
 def process_channel_scan_sync(job, _api_key, job_manager):
     """Thread worker'dan çağrılır."""
     job_manager._status = "scanning_channel"
     job_manager._message = f"Kanal taranıyor: {job['url']}"
-    _do_channel_scan(job["url"], job.get("last_hours", 24), job_manager)
+    _do_channel_scan(job["url"], job.get("last_hours", 24), job_manager,
+                     job.get("content_type", "all"))
 
 
-def _do_channel_scan(channel_url, last_hours, job_manager):
+def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
     try:
-        res = fetch_channel_videos(channel_url, last_hours=last_hours)
+        res = fetch_channel_videos(channel_url, last_hours=last_hours,
+                                   content_type=content_type)
     except Exception as e:
         print(f"[KANAL-TARAMA] Hata: {e}")
         return

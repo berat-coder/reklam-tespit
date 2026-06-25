@@ -66,7 +66,7 @@ def _pick_channel_avatar(thumbnails):
     return ""
 
 
-def fetch_channel_videos(channel_url, last_hours=24):
+def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
     base_url = channel_url.rstrip("/")
     for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community", "/live"):
         if base_url.endswith(suffix):
@@ -190,7 +190,17 @@ def fetch_channel_videos(channel_url, last_hours=24):
             continue
 
     videos_list = list(all_entries.values())
-    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın (avatar: {'evet' if channel_avatar else 'yok'})")
+
+    # İçerik tipi filtresi: canlı yayın (streams/live) vs normal video
+    def _is_live_content(v):
+        return bool(v.get("is_live")) or v.get("tab") in ("streams", "live")
+    if content_type == "live":
+        videos_list = [v for v in videos_list if _is_live_content(v)]
+    elif content_type == "video":
+        videos_list = [v for v in videos_list if not _is_live_content(v)]
+
+    print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın "
+          f"(tip: {content_type}, avatar: {'evet' if channel_avatar else 'yok'})")
     return {
         "channel_name": channel_name or channel_id_from_url(channel_url),
         "channel_id": channel_id_meta,

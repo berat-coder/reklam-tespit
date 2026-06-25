@@ -142,11 +142,11 @@ class JobManager:
         self._ensure_worker()
         return job["id"]
 
-    def add_channel_scan(self, channel_url, last_hours=24):
+    def add_channel_scan(self, channel_url, last_hours=24, content_type="all"):
         if USE_REDIS:
             from services.tasks import process_channel_scan_rq
             job = _rq.enqueue(
-                process_channel_scan_rq, channel_url, last_hours,
+                process_channel_scan_rq, channel_url, last_hours, content_type,
                 job_timeout=7200,
             )
             return job.id
@@ -155,6 +155,7 @@ class JobManager:
                 "type": "channel_scan",
                 "url": channel_url,
                 "last_hours": last_hours,
+                "content_type": content_type,
                 "id": str(uuid.uuid4())[:8],
             }
             self._queue.append(job)

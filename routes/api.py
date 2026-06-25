@@ -457,6 +457,11 @@ def brand_edit(video_id):
 
 # ── Tarama / Analiz ───────────────────────────────────────────────────────────
 
+def _content_type(data):
+    ct = (data.get("content_type") or "all").lower()
+    return ct if ct in ("all", "live", "video") else "all"
+
+
 @api_bp.route("/api/scan/channel", methods=["POST"])
 def scan_channel():
     data = request.get_json()
@@ -464,7 +469,8 @@ def scan_channel():
     hours = int(data.get("hours", 24))
     if not url:
         return jsonify({"error": "URL gerekli"}), 400
-    job_id = JOB_MANAGER.add_channel_scan(url, last_hours=hours)
+    job_id = JOB_MANAGER.add_channel_scan(url, last_hours=hours,
+                                          content_type=_content_type(data))
     return jsonify({"ok": True, "job_id": job_id})
 
 
@@ -472,11 +478,13 @@ def scan_channel():
 def scan_all():
     data = request.get_json() or {}
     hours = int(data.get("hours", 24))
+    ct = _content_type(data)
     cfg = load_config()
     channels = cfg.get("channels", [])
     if not channels:
         return jsonify({"error": "Kanal listesi boş"}), 400
-    job_ids = [JOB_MANAGER.add_channel_scan(url, last_hours=hours) for url in channels]
+    job_ids = [JOB_MANAGER.add_channel_scan(url, last_hours=hours, content_type=ct)
+               for url in channels]
     return jsonify({"ok": True, "job_ids": job_ids, "count": len(channels)})
 
 

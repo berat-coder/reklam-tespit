@@ -234,6 +234,12 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
   max-width: 460px; width: 100%; padding: 28px;
 }
+.scan-type { display: inline-flex; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 2px; gap: 2px; }
+.scan-type-btn { font-size: 12px; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  color: var(--dim); white-space: nowrap; }
+.scan-type-btn:hover { color: var(--text); }
+.scan-type-btn.active { background: var(--accent); color: #fff; }
 .setup-close {
   position: absolute; top: 14px; right: 14px; width: 32px; height: 32px;
   background: var(--bg3); border: 1px solid var(--border); color: var(--dim);
@@ -635,7 +641,20 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 
 <script>
 const $ = id => document.getElementById(id);
-let state = { page: 'home', channelId: null, videoId: null, filter: 'all', browseFilter: 'all' };
+let state = { page: 'home', channelId: null, videoId: null, filter: 'all', browseFilter: 'all', scanType: 'all' };
+
+// Tarama içerik tipi seçici (Tümü / Canlı Yayın / Video)
+const SCAN_TYPES = [{t:'all',l:'Tümü'},{t:'live',l:'Canlı Yayın'},{t:'video',l:'Video'}];
+function scanTypeSelector() {
+  return `<div class="scan-type">${SCAN_TYPES.map(x =>
+    `<div class="scan-type-btn ${state.scanType===x.t?'active':''}" data-type="${x.t}" onclick="setScanType('${x.t}')">${x.l}</div>`
+  ).join('')}</div>`;
+}
+function setScanType(t) {
+  state.scanType = t;
+  document.querySelectorAll('.scan-type-btn').forEach(el =>
+    el.classList.toggle('active', el.dataset.type === t));
+}
 
 // Oturum bitince (401) login sayfasına yönlendir
 (function () {
@@ -813,6 +832,7 @@ async function loadHome() {
       </button>
       <button class="btn" onclick="scanAll(72)">Son 3 Gün</button>
       <button class="btn" onclick="scanAll(168)">Son 1 Hafta</button>
+      ${scanTypeSelector()}
       <div class="spacer"></div>
       <button class="btn" onclick="addChannelPrompt()">
         <i class="ti ti-plus"></i> Kanal Ekle
@@ -911,24 +931,29 @@ async function addChannelPrompt() {
   loadHome();
 }
 
+function _scanTypeLabel() {
+  return (SCAN_TYPES.find(x => x.t === state.scanType) || SCAN_TYPES[0]).l;
+}
+
 async function scanAll(hours) {
-  if (!confirm(`Tüm kanallardaki son ${hours} saatteki videolar taransın mı? Bu işlem uzun sürer ve API kullanır.`)) return;
+  if (!confirm(`Tüm kanallardaki son ${hours} saatteki "${_scanTypeLabel()}" içerikleri taransın mı? Bu işlem uzun sürer ve API kullanır.`)) return;
   const r = await fetch('/api/scan/all', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({hours})
+    body: JSON.stringify({hours, content_type: state.scanType})
   });
   const d = await r.json();
   if (d.error) toast('Hata: ' + d.error, 'error');
-  else toast(`${d.count} kanal sıraya alındı`, 'success');
+  else toast(`${d.count} kanal sıraya alındı (${_scanTypeLabel()})`, 'success');
 }
 
 async function scanChannel(channelUrl, hours) {
   const r = await fetch('/api/scan/channel', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({url: channelUrl, hours})
+    body: JSON.stringify({url: channelUrl, hours, content_type: state.scanType})
   });
   const d = await r.json();
   if (d.error) toast('Hata: ' + d.error, 'error');
+  else toast(`Tarama başladı: ${_scanTypeLabel()} · son ${hours}s`, 'success');
 }
 
 // ─── Channel Browse (Manuel Video Seçim) ───
@@ -1415,7 +1440,8 @@ async function loadChannel(id) {
         <h1>${esc(ch.name)}</h1>
         <div class="subtitle">${esc(ch.id)} · ${d.videos.length} analiz edilen video</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${scanTypeSelector()}
         <button class="btn primary" onclick="scanChannel('${esc(ch.url)}', 24)">
           <i class="ti ti-refresh"></i> Son 24h Tara
         </button>
