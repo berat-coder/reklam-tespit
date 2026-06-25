@@ -234,6 +234,13 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
   max-width: 460px; width: 100%; padding: 28px;
 }
+.setup-close {
+  position: absolute; top: 14px; right: 14px; width: 32px; height: 32px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--dim);
+  border-radius: 8px; cursor: pointer; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+}
+.setup-close:hover { color: var(--text); border-color: var(--dim); }
 .setup-title { font-size: 19px; font-weight: 600; margin-bottom: 6px; }
 .setup-desc { color: var(--dim); font-size: 12px; margin-bottom: 16px; line-height: 1.6; }
 .setup-input {
@@ -521,8 +528,9 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 <div class="toast-wrap" id="toastWrap"></div>
 <button class="menu-toggle" id="menuToggle" aria-label="Menüyü aç/kapat" onclick="toggleSidebar()"><i class="ti ti-menu-2"></i></button>
 
-<div class="setup-overlay" id="setupOv" style="display:none">
-  <div class="setup-card">
+<div class="setup-overlay" id="setupOv" style="display:none" onclick="if(event.target===this)closeSetup()">
+  <div class="setup-card" style="position:relative">
+    <button class="setup-close" onclick="closeSetup()" title="Kapat" aria-label="Kapat"><i class="ti ti-x"></i></button>
     <div class="setup-title">🔑 Gemini API Anahtarı</div>
     <div class="setup-desc">
       Devam etmek için Gemini API anahtarı girin. Anahtar yalnızca sizin bilgisayarınızda saklanır.
@@ -689,6 +697,7 @@ async function refreshKey() {
   }
 }
 function openSetup() { $('setupOv').style.display = 'flex'; setTimeout(()=>$('setupKey').focus(),50); loadUsers(); }
+function closeSetup() { $('setupOv').style.display = 'none'; }
 
 async function loadUsers() {
   const box = $('userList');
