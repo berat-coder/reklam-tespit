@@ -154,6 +154,12 @@ def fetch_channel_videos(channel_url, last_hours=24):
                 # video / url / url_transparent / None → hepsini al (canlı yayın dahil)
                 if entry.get("_type") not in (None, "url", "video", "url_transparent"):
                     continue
+                # Shorts atla (kısa süreli veya /shorts/ url)
+                _dur = entry.get("duration", 0) or 0
+                _url = entry.get("url", "") or ""
+                from config import SHORTS_MAX_DURATION
+                if "/shorts/" in _url or (0 < _dur <= SHORTS_MAX_DURATION):
+                    continue
                 is_live = bool(entry.get("is_live") or entry.get("was_live"))
                 all_entries[eid] = {
                     "id": eid,

@@ -70,6 +70,11 @@ GEMINI_RPM = _int_env("GEMINI_RPM", _default_rpm)
 SCENE_DIFF_THRESHOLD = _float_env("SCENE_DIFF_THRESHOLD", 0.03)
 # Alt-bant yükseltici: atlanacak frame'in alt bandı bu kadar değiştiyse yine de gönder
 LOWER_BAND_THRESHOLD = _float_env("LOWER_BAND_THRESHOLD", 0.06)
+# Bir videoda bir marka bu kadar (veya daha fazla) kez görünürse otomatik ANA SPONSOR
+# sayılır (+ köşe logosu sayılmaz) — şişik veriyi (ör. 4000 Predator) önler.
+AUTO_SPONSOR_THRESHOLD = _int_env("AUTO_SPONSOR_THRESHOLD", 70)
+# Shorts atlama: süresi 1..bu değer (sn) arası olan videolar Shorts sayılıp atlanır
+SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
 
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",

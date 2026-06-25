@@ -158,6 +158,28 @@ def _since_from_days():
     return (datetime.utcnow() - timedelta(days=days)).isoformat()
 
 
+@api_bp.route("/api/maintenance/auto-sponsors", methods=["POST"])
+def maintenance_auto_sponsors():
+    """Mevcut tüm videolarda eşik üstü markaları geriye dönük ana sponsor yapar
+    (şişik geçmiş veriyi düzeltir). Bir kez çalıştırmak yeterli."""
+    from config import AUTO_SPONSOR_THRESHOLD
+    videos = get_all_videos(completed_only=True)
+    flagged = {}
+    for v in videos:
+        ch = get_channel(v["channel_id"]) or {}
+        sk = {s.casefold() for s in ch.get("main_sponsors", [])}
+        for m, c in (v.get("brand_counts") or {}).items():
+            if c >= AUTO_SPONSOR_THRESHOLD and m.casefold() not in sk:
+                set_channel_brand_flag(v["channel_id"], m, "main_sponsor", True)
+                set_channel_brand_flag(v["channel_id"], m, "active_only", True)
+                sk.add(m.casefold())
+                flagged.setdefault(v["channel_id"], []).append(m)
+    for v in videos:
+        recompute_video_aggregates(v["id"])
+    return jsonify({"ok": True, "flagged": flagged,
+                    "threshold": AUTO_SPONSOR_THRESHOLD})
+
+
 @api_bp.route("/api/dashboard")
 def dashboard():
     return jsonify(get_dashboard_data(since=_since_from_days()))
@@ -440,6 +462,8 @@ def analyze_single_video():
         return jsonify({"error": "URL gerekli"}), 400
     if "youtube.com" not in url and "youtu.be" not in url:
         return jsonify({"error": "Geçerli bir YouTube URL'si girin"}), 400
+    if "/shorts/" in url:
+        return jsonify({"error": "Shorts videoları analiz edilmiyor"}), 400
     if not has_cookies():
         return jsonify({
             "error": "YouTube cookie bulunamadı. Railway'de YOUTUBE_COOKIES "

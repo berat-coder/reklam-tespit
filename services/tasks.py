@@ -25,7 +25,9 @@ from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from
 from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
+    set_channel_brand_flag, recompute_video_aggregates,
 )
+from config import AUTO_SPONSOR_THRESHOLD
 
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
@@ -381,6 +383,8 @@ def _analyze_video_core(
 
     ch = get_channel(channel_id) or {}
     channel_logos = ch.get("channel_logos", [])
+    main_sponsors = ch.get("main_sponsors", [])
+    active_only = ch.get("sponsor_active_only", [])
 
     # ── Canlı state başlat ──
     on_clear_live()
@@ -573,8 +577,8 @@ def _analyze_video_core(
         update_channel_logos(channel_id, updated_logos)
         channel_logos = updated_logos
 
-    # ── Özet ve kayıt (ortak agregat modülü) ──
-    agg = compute_aggregates(detections, channel_logos)
+    # ── Özet ve kayıt (ortak agregat modülü, mevcut sponsor/logo bayraklarıyla) ──
+    agg = compute_aggregates(detections, channel_logos, main_sponsors, active_only)
 
     upsert_video(
         video_id=video_id,
@@ -594,6 +598,18 @@ def _analyze_video_core(
         completed=True,
     )
     save_detections(video_id, detections)
+
+    # ── Otomatik ANA SPONSOR: bir videoda eşik üstü görünen marka şişik veridir;
+    #    ana sponsor + köşe-logosu-sayma işaretle, sayımdan düşür, detayda kalsın ──
+    sponsor_keys = {s.casefold() for s in main_sponsors}
+    auto = [m for m, c in agg["brand_counts"].items()
+            if c >= AUTO_SPONSOR_THRESHOLD and m.casefold() not in sponsor_keys]
+    if auto:
+        for m in auto:
+            set_channel_brand_flag(channel_id, m, "main_sponsor", True)
+            set_channel_brand_flag(channel_id, m, "active_only", True)
+        status(f"Otomatik ana sponsor: {', '.join(auto)}")
+        agg = recompute_video_aggregates(video_id) or agg  # bayraklarla yeniden hesapla
 
     msg = f"✓ Tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam"
     status(msg)

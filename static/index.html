@@ -562,8 +562,8 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
           <span id="queueLen" style="color:var(--dim)">0</span>
         </div>
         <div class="queue-msg" id="queueMsg">Hazır</div>
-        <button class="btn sm full" id="cancelQueueBtn" style="margin-top:6px;display:none" onclick="cancelQueue()">
-          Sırayı İptal Et
+        <button class="btn sm full" id="cancelQueueBtn" style="margin-top:6px;color:var(--red);border-color:var(--red)" onclick="cancelQueue()">
+          <i class="ti ti-player-stop"></i> Tüm İşlemleri Durdur
         </button>
       </div>
     </div>
@@ -583,6 +583,9 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); openSetup()">
           <i class="ti ti-settings"></i> Ayarlar
         </div>
+        <a class="nav-item" href="/logout" style="text-decoration:none;color:inherit">
+          <i class="ti ti-logout"></i> Çıkış
+        </a>
       </div>
     </div>
 
@@ -616,6 +619,19 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 <script>
 const $ = id => document.getElementById(id);
 let state = { page: 'home', channelId: null, videoId: null, filter: 'all', browseFilter: 'all' };
+
+// Oturum bitince (401) login sayfasına yönlendir
+(function () {
+  const _fetch = window.fetch;
+  window.fetch = async function (...args) {
+    const r = await _fetch(...args);
+    if (r.status === 401) {
+      try { const c = r.clone(); const d = await c.json(); if (d.auth_required) location.href = '/login'; }
+      catch (e) {}
+    }
+    return r;
+  };
+})();
 
 // ─── Toast bildirimleri (alert yerine) ───
 function toast(msg, type = 'info', ms = 4000) {
@@ -681,16 +697,13 @@ async function pollQueue() {
     const r = await fetch('/api/queue');
     const d = await r.json();
     const stateEl = $('queueState'), lenEl = $('queueLen'), msgEl = $('queueMsg');
-    const cancelBtn = $('cancelQueueBtn');
 
     if (d.running) {
       stateEl.textContent = 'Çalışıyor';
       stateEl.style.color = 'var(--amber)';
-      cancelBtn.style.display = 'block';
     } else {
       stateEl.textContent = 'Boş';
       stateEl.style.color = 'var(--green)';
-      cancelBtn.style.display = 'none';
     }
     lenEl.textContent = d.queue_length;
     msgEl.textContent = (d.message || '').slice(0, 80);
@@ -707,8 +720,12 @@ async function pollQueue() {
 }
 
 async function cancelQueue() {
-  if (!confirm('Tüm sıra iptal edilsin mi?')) return;
-  await fetch('/api/cancel-queue', {method:'POST'});
+  if (!confirm('Tüm işlemler (çalışan analiz + bekleyen sıra) durdurulup iptal edilsin mi?')) return;
+  try {
+    await fetch('/api/cancel-queue', {method:'POST'});
+    toast('Tüm işlemler durduruldu', 'success');
+  } catch (e) { toast('İptal hatası', 'error'); }
+  pollQueue();
 }
 
 // ─── Navigation ───
