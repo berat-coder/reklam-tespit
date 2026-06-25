@@ -532,6 +532,15 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
     <div class="setup-help">
       Anahtar almak için: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>
     </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px">👤 Kullanıcılar</div>
+      <div class="setup-desc">Giriş yapabilecek hesaplar. Buradan yeni hesap açabilirsin.</div>
+      <div id="userList" style="margin-bottom:12px"></div>
+      <input type="text" class="setup-input" id="newUser" placeholder="kullanıcı adı" style="margin-bottom:8px">
+      <input type="password" class="setup-input" id="newPass" placeholder="şifre">
+      <button class="btn full" onclick="createUser()" style="margin-top:8px"><i class="ti ti-user-plus"></i> Kullanıcı Ekle</button>
+    </div>
   </div>
 </div>
 
@@ -679,7 +688,45 @@ async function refreshKey() {
     $('setupOv').style.display = 'flex';
   }
 }
-function openSetup() { $('setupOv').style.display = 'flex'; setTimeout(()=>$('setupKey').focus(),50); }
+function openSetup() { $('setupOv').style.display = 'flex'; setTimeout(()=>$('setupKey').focus(),50); loadUsers(); }
+
+async function loadUsers() {
+  const box = $('userList');
+  if (!box) return;
+  try {
+    const d = await (await fetch('/api/users')).json();
+    const admin = d.admin;
+    const rows = [{username: admin, admin: true}].concat((d.users || []).filter(u => u.username !== admin));
+    box.innerHTML = rows.map(u => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px">
+        <i class="ti ti-user" style="color:var(--dim)"></i>
+        <span style="flex:1">${esc(u.username)}${u.admin ? ' <span style="color:var(--dim);font-size:11px">(ana hesap)</span>' : ''}</span>
+        ${u.admin ? '' : `<button class="tespit-del" title="Sil" onclick="deleteUser('${jsq(u.username)}')"><i class="ti ti-trash"></i></button>`}
+      </div>`).join('');
+  } catch (e) {}
+}
+
+async function createUser() {
+  const username = ($('newUser').value || '').trim();
+  const password = ($('newPass').value || '').trim();
+  if (!username || !password) { toast('Kullanıcı adı ve şifre gerekli', 'error'); return; }
+  const d = await (await fetch('/api/users', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username, password})
+  })).json();
+  if (d.error) { toast(d.error, 'error'); return; }
+  toast(`"${username}" eklendi`, 'success');
+  $('newUser').value = ''; $('newPass').value = '';
+  loadUsers();
+}
+
+async function deleteUser(username) {
+  if (!confirm(`"${username}" silinsin mi?`)) return;
+  const d = await (await fetch('/api/users/' + encodeURIComponent(username), {method: 'DELETE'})).json();
+  if (d.error) { toast(d.error, 'error'); return; }
+  toast(`"${username}" silindi`, 'success');
+  loadUsers();
+}
 async function saveKey() {
   const k = $('setupKey').value.trim();
   if (!k) { toast('Anahtar boş olamaz', 'error'); return; }

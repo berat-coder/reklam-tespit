@@ -5,7 +5,7 @@ from flask import (
     Flask, send_from_directory, request, session, redirect, Response,
 )
 from config import BASE_DIR, FRAMES_DIR
-from models.database import init_db
+from models.database import init_db, verify_user
 from routes.api import api_bp
 
 app = Flask(__name__, static_folder=None)
@@ -75,9 +75,12 @@ def login():
         return redirect("/")
     error = ""
     if request.method == "POST":
-        if (request.form.get("username") == APP_USERNAME
-                and request.form.get("password") == APP_PASSWORD):
+        u = request.form.get("username", "")
+        pw = request.form.get("password", "")
+        # Ana hesap (env) VEYA Ayarlar'dan oluşturulmuş DB kullanıcısı
+        if (u == APP_USERNAME and pw == APP_PASSWORD) or verify_user(u, pw):
             session["logged_in"] = True
+            session["username"] = u
             session.permanent = True
             return redirect("/")
         error = "Hatalı kullanıcı adı veya şifre"

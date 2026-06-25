@@ -1,9 +1,11 @@
+import os
 import json
 import sqlite3
+from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
+from werkzeug.security import generate_password_hash, check_password_hash
 
-import os
 DB_PATH = Path(os.environ.get("DATA_DIR", Path(__file__).parent.parent)) / "data.db"
 
 _SCHEMA = """
@@ -53,7 +55,49 @@ CREATE TABLE IF NOT EXISTS detections (
     manual_clean INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (video_id) REFERENCES videos(id)
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT
+);
 """
+
+
+# ── Kullanıcılar (çoklu giriş) ─────────────────────────────────────────────────
+
+def create_user(username, password):
+    username = (username or "").strip()
+    if not username or not password:
+        raise ValueError("Kullanıcı adı ve şifre gerekli")
+    with get_db() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+            raise ValueError("Bu kullanıcı adı zaten var")
+        conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username, generate_password_hash(password), datetime.utcnow().isoformat()),
+        )
+
+
+def verify_user(username, password):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    return bool(row) and check_password_hash(row["password_hash"], password)
+
+
+def list_users():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT username, created_at FROM users ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_user(username):
+    with get_db() as conn:
+        conn.execute("DELETE FROM users WHERE username = ?", ((username or "").strip(),))
 
 
 @contextmanager

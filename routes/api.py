@@ -1,3 +1,4 @@
+import os
 import io
 import csv
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
     update_detection, recompute_video_aggregates, set_channel_brand_flag,
     edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
+    create_user, list_users, delete_user,
 )
 from services.aggregates import compute_aggregates
 
@@ -143,6 +145,30 @@ def channel_detail(ch_id=None):
             for t, c in sorted(type_totals.items(), key=lambda x: -x[1])
         ],
     })
+
+
+# ── Kullanıcı yönetimi ─────────────────────────────────────────────────────────
+
+@api_bp.route("/api/users", methods=["GET", "POST"])
+def users_endpoint():
+    admin = os.environ.get("APP_USERNAME", "admin")
+    if request.method == "POST":
+        data = request.get_json() or {}
+        try:
+            create_user(data.get("username"), data.get("password"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True})
+    return jsonify({"users": list_users(), "admin": admin})
+
+
+@api_bp.route("/api/users/<path:username>", methods=["DELETE"])
+def delete_user_endpoint(username):
+    admin = os.environ.get("APP_USERNAME", "admin")
+    if username == admin:
+        return jsonify({"error": "Ana hesap silinemez"}), 400
+    delete_user(username)
+    return jsonify({"ok": True})
 
 
 # ── Sponsorluk İstihbarat Paneli ───────────────────────────────────────────────
