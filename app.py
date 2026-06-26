@@ -37,6 +37,14 @@ app.permanent_session_lifetime = timedelta(days=30)
 app.register_blueprint(api_bp)
 init_db()
 
+# Gece otomatik canlı-yayın taraması zamanlayıcısı (web process'inde tek thread).
+# RQ worker app.py'ı import etmediği için yalnız web'de doğar; --workers 1 → tek instance.
+try:
+    from services.scheduler import start_scheduler
+    start_scheduler()
+except Exception as _e:
+    print(f"[OTO-TARAMA] başlatılamadı: {_e}")
+
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

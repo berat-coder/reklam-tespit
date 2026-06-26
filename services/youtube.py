@@ -66,7 +66,21 @@ def _pick_channel_avatar(thumbnails):
     return ""
 
 
-def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
+def _entry_ts(d):
+    """Flat entry / info'dan yayın zaman damgası (epoch sn) — yoksa 0."""
+    try:
+        return int(d.get("timestamp") or d.get("release_timestamp") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def fetch_live_streams(channel_url, last_hours=0):
+    """Scheduler keşfi için ucuz yol — sadece /live + /streams sekmeleri."""
+    return fetch_channel_videos(channel_url, last_hours=last_hours,
+                                content_type="live", tabs=["live", "streams"])
+
+
+def fetch_channel_videos(channel_url, last_hours=24, content_type="all", tabs=None):
     base_url = channel_url.rstrip("/")
     for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community", "/live"):
         if base_url.endswith(suffix):
@@ -78,12 +92,14 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
     channel_id_meta = ""
     channel_avatar = ""
 
-    tries = [
-        (base_url + "/videos",  "videos"),
-        (base_url + "/streams", "streams"),
-        (base_url + "/live",    "live"),    # canlı yayın varsa yakala
-        (base_url,              "main"),
-    ]
+    _TAB_URLS = {
+        "videos":  (base_url + "/videos",  "videos"),
+        "streams": (base_url + "/streams", "streams"),
+        "live":    (base_url + "/live",    "live"),    # canlı yayın varsa yakala
+        "main":    (base_url,              "main"),
+    }
+    tab_order = tabs or ["videos", "streams", "live", "main"]
+    tries = [_TAB_URLS[t] for t in tab_order if t in _TAB_URLS]
 
     for try_url, tab in tries:
         try:
@@ -130,6 +146,7 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
                         "view_count": info.get("view_count", 0) or 0,
                         "tab": "live",
                         "is_live": True,
+                        "timestamp": _entry_ts(info),
                     }
                 print(f"[KANAL] {try_url} → canlı yayın bulundu: {eid}")
                 continue
@@ -173,6 +190,7 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
                     "view_count": entry.get("view_count", 0) or 0,
                     "tab": tab,
                     "is_live": is_live,
+                    "timestamp": _entry_ts(entry),
                 }
                 count += 1
             print(f"[KANAL] {try_url} → {count} yeni video (toplam: {len(all_entries)})")
@@ -198,6 +216,27 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all"):
         videos_list = [v for v in videos_list if _is_live_content(v)]
     elif content_type == "video":
         videos_list = [v for v in videos_list if not _is_live_content(v)]
+
+    import time as _time
+    now = int(_time.time())
+
+    # Zaman penceresi filtresi (last_hours>0). Zaman damgası BİLİNMEYEN entry'ler
+    # ATILMAZ — kaçırmamak için tutulur (flat extraction her zaman tarih vermez).
+    if last_hours and last_hours > 0:
+        cut = now - int(last_hours) * 3600
+        videos_list = [v for v in videos_list
+                       if (not v.get("timestamp")) or v["timestamp"] >= cut]
+
+    # En yeni → en eski sırala. Tarihi bilinmeyen canlı/yayın içerik "şimdi"
+    # sayılıp üste çıkar; diğer tarihsizler en alta düşer.
+    def _sort_key(v):
+        ts = v.get("timestamp") or 0
+        if ts:
+            return ts
+        if _is_live_content(v):
+            return now + 1
+        return 0
+    videos_list.sort(key=_sort_key, reverse=True)
 
     print(f"[KANAL] SONUÇ: {channel_name} - {len(videos_list)} video/yayın "
           f"(tip: {content_type}, avatar: {'evet' if channel_avatar else 'yok'})")

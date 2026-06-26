@@ -94,12 +94,38 @@ DEFAULT_CHANNELS = [
 
 _CONFIG_FILE = DATA_DIR / "config.json"
 
+# ── Otomatik gece taraması (envanter canlı yayınları) varsayılanları ──
+# Her `interval_min` dakikada BİR canlı yayın analiz edilir. 03:00–09:30 arası,
+# 15 dk ile ≈26 yayın/gece → Gemini günlük kotasını (3.1-flash-lite ~500 RPD)
+# zorlamaz. Hepsi UI Ayarlar'dan değiştirilebilir (config.json'a yazılır).
+DEFAULT_AUTO_SCAN = {
+    "enabled": True,
+    "start": os.environ.get("AUTO_SCAN_START", "03:00"),     # HH:MM (yerel saat)
+    "end": os.environ.get("AUTO_SCAN_END", "09:30"),         # HH:MM
+    "interval_min": _int_env("AUTO_SCAN_INTERVAL_MIN", 15),  # analiz temposu (dk)
+    "lookback_hours": _int_env("AUTO_SCAN_LOOKBACK_HOURS", 24),  # ilk keşif geriye-bakış
+    "content_type": "live",                                  # sadece canlı yayın
+    "nightly_cap": _int_env("AUTO_SCAN_NIGHTLY_CAP", 30),    # gecelik güvenlik üst sınırı
+    "tz_offset": _int_env("AUTO_SCAN_TZ_OFFSET", 3),         # UTC ofseti (TR=+3) — saat hesabı buna göre
+}
+
+
+def _merge_auto_scan(saved):
+    """Kayıtlı auto_scan üzerine default'ları bindirir (eksik alanlar tamamlanır)."""
+    merged = dict(DEFAULT_AUTO_SCAN)
+    if isinstance(saved, dict):
+        for k in merged:
+            if k in saved and saved[k] is not None:
+                merged[k] = saved[k]
+    return merged
+
 
 def load_config():
     # Önce env var'ı taban olarak al
     cfg = {
         "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
         "channels": list(DEFAULT_CHANNELS),
+        "auto_scan": dict(DEFAULT_AUTO_SCAN),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır
     if _CONFIG_FILE.exists():
@@ -109,6 +135,7 @@ def load_config():
                 cfg["gemini_api_key"] = saved["gemini_api_key"]
             if saved.get("channels"):
                 cfg["channels"] = saved["channels"]
+            cfg["auto_scan"] = _merge_auto_scan(saved.get("auto_scan"))
         except Exception:
             pass
     return cfg

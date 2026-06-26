@@ -70,6 +70,20 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     created_at    TEXT
 );
+
+CREATE TABLE IF NOT EXISTS live_seen (
+    video_id   TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL DEFAULT '',
+    title      TEXT NOT NULL DEFAULT '',
+    url        TEXT NOT NULL DEFAULT '',
+    seen_at    TEXT,
+    analyzed   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_kv (
+    k TEXT PRIMARY KEY,
+    v TEXT NOT NULL DEFAULT ''
+);
 """).replace("__AUTO_ID__", _AUTO_ID)
 
 # Additive migration'lar (her iki lehçe) — (tablo, sütun, tip-tanım)
@@ -119,6 +133,94 @@ def list_users():
 def delete_user(username):
     with get_db() as conn:
         conn.execute("DELETE FROM users WHERE username = ?", ((username or "").strip(),))
+
+
+# ── Canlı yayın dedup (gece otomatik taraması) ─────────────────────────────────
+
+def is_live_seen(video_id):
+    """Bu canlı yayın daha önce keşfedilip kuyruğa alındı mı?"""
+    if not video_id:
+        return False
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM live_seen WHERE video_id = ?", (video_id,)
+        ).fetchone()
+        return bool(row)
+
+
+def mark_live_seen(video_id, channel_id="", title="", url="", analyzed=False):
+    """Bir canlı yayını 'görüldü' olarak kaydet (idempotent upsert)."""
+    if not video_id:
+        return
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO live_seen (video_id, channel_id, title, url, seen_at, analyzed)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                channel_id = COALESCE(NULLIF(excluded.channel_id, ''), live_seen.channel_id),
+                title      = COALESCE(NULLIF(excluded.title, ''),      live_seen.title),
+                url        = COALESCE(NULLIF(excluded.url, ''),        live_seen.url),
+                analyzed   = CASE WHEN excluded.analyzed = 1 THEN 1 ELSE live_seen.analyzed END
+        """, (video_id, channel_id, title, url,
+              datetime.utcnow().isoformat(), int(bool(analyzed))))
+
+
+def list_live_seen(since=None, limit=50):
+    """Son görülen canlı yayınlar (panel için). since: ISO tarih filtresi."""
+    with get_db() as conn:
+        q = "SELECT * FROM live_seen"
+        params = []
+        if since:
+            q += " WHERE seen_at >= ?"
+            params.append(since)
+        q += " ORDER BY seen_at DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+
+def next_pending_live():
+    """Henüz analize gönderilmemiş, en son keşfedilen canlı yayın (analiz sırası)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM live_seen WHERE analyzed = 0 ORDER BY seen_at DESC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def count_pending_live():
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM live_seen WHERE analyzed = 0"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+
+def prune_live_seen(hours=36):
+    """Eski live_seen kayıtlarını buda (ertesi gece yeniden denenebilsin)."""
+    cut = (datetime.utcnow() - __import__("datetime").timedelta(hours=hours)).isoformat()
+    with get_db() as conn:
+        conn.execute("DELETE FROM live_seen WHERE seen_at IS NOT NULL AND seen_at < ?", (cut,))
+
+
+# ── Basit anahtar/değer durum deposu (scheduler runtime state) ─────────────────
+
+def kv_get(key, default=None):
+    with get_db() as conn:
+        row = conn.execute("SELECT v FROM app_kv WHERE k = ?", (key,)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row["v"])
+    except (ValueError, TypeError):
+        return default
+
+
+def kv_set(key, value):
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO app_kv (k, v) VALUES (?, ?)
+            ON CONFLICT(k) DO UPDATE SET v = excluded.v
+        """, (key, json.dumps(value, ensure_ascii=False)))
 
 
 class _PGConn:

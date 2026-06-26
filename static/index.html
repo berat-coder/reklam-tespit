@@ -9,25 +9,27 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f6f7f9;        /* sayfa zemini (açık gri) */
+  --bg: #f4f5fa;        /* sayfa zemini (hafif soğuk) */
   --bg2: #ffffff;       /* kenar çubuğu / yüzey */
-  --bg3: #eef0f3;       /* hafif gri dolgu (çip/hover/track/placeholder) */
-  --bg4: #e3e6eb;       /* daha koyu dolgu / hover */
+  --bg3: #eceef4;       /* hafif dolgu (çip/hover/track/placeholder) */
+  --bg4: #dfe3ec;       /* daha koyu dolgu / hover */
   --surface: #ffffff;   /* kart yüzeyi (beyaz) */
-  --border: #e7e9ed;
-  --border2: #d8dce2;
-  --text: #15171c;      /* neredeyse siyah */
-  --dim: #6b7280;       /* ikincil metin */
-  --dimmer: #9aa1ab;    /* soluk */
-  --accent: #15171c;    /* birincil = nötr siyah (butonlar/aktif) */
-  --accent2: #000000;   /* primary hover */
-  --green: #1a9c63;     /* durum: temiz */
-  --amber: #c77700;     /* durum: orta */
+  --border: #e6e8f0;
+  --border2: #d3d8e3;
+  --text: #14162b;      /* neredeyse siyah (hafif lacivert) */
+  --dim: #656c82;       /* ikincil metin */
+  --dimmer: #9aa1b4;    /* soluk */
+  --accent: #4f46e5;    /* birincil = indigo (butonlar/aktif) */
+  --accent2: #4338ca;   /* primary hover */
+  --accent-soft: rgba(79,70,229,0.10);
+  --accent-grad: linear-gradient(135deg, #4f46e5 0%, #7c5cff 100%);
+  --green: #15a564;     /* durum: temiz */
+  --amber: #d08200;     /* durum: orta */
   --red: #e5484d;       /* durum: reklam */
   --blue: #2f6feb;
   --purple: #7c5cff;
-  --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.07);
-  --shadow-lg: 0 4px 12px rgba(16,24,40,.08), 0 2px 4px rgba(16,24,40,.05);
+  --shadow: 0 1px 2px rgba(20,22,43,.04), 0 1px 3px rgba(20,22,43,.06);
+  --shadow-lg: 0 8px 24px rgba(20,22,43,.10), 0 2px 6px rgba(20,22,43,.06);
 }
 body {
   background: var(--bg); color: var(--text); font-size: 14px;
@@ -48,8 +50,9 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .brand-icon {
-  width: 32px; height: 32px; background: var(--accent); border-radius: 7px;
-  display: flex; align-items: center; justify-content: center; font-size: 14px;
+  width: 34px; height: 34px; background: var(--accent-grad); border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; font-size: 15px;
+  color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,.35);
 }
 .brand-name { font-size: 14px; font-weight: 600; }
 .brand-ver { font-size: 10px; color: var(--dim); margin-top: 1px; }
@@ -111,7 +114,8 @@ body {
   color: var(--dim); display: flex; align-items: center; gap: 8px;
 }
 .nav-item:hover { background: var(--bg3); color: var(--text); }
-.nav-item.active { background: var(--bg3); color: var(--text); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav-item.active .ti { color: var(--accent); }
 
 /* Main */
 .main { padding: 28px 32px; max-width: 1400px; }
@@ -119,7 +123,7 @@ body {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-bottom: 22px;
 }
-h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 .subtitle { color: var(--dim); font-size: 13px; margin-top: 4px; }
 
 /* Channel grid */
@@ -154,6 +158,18 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   background: var(--bg3); font-size: 10px; padding: 2px 7px; border-radius: 10px;
   color: var(--dim); border: 1px solid var(--border);
 }
+
+/* Marka logosu/avatarı — gerçek favicon yüklenirse baş harfin üstüne biner */
+.brand-ava {
+  position: relative; width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0;
+  background: var(--accent-soft); display: inline-flex; align-items: center;
+  justify-content: center; overflow: hidden; vertical-align: middle;
+}
+.brand-ava.lg { width: 30px; height: 30px; border-radius: 8px; }
+.brand-ava-init { font-size: 11px; font-weight: 700; color: var(--accent); }
+.brand-ava.lg .brand-ava-init { font-size: 13px; }
+.brand-ava img { position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; background: #fff; opacity: 0; transition: opacity .15s; }
 .brand-pill.hot { color: var(--red); border-color: var(--red); background: rgba(229,72,77,0.07); }
 
 /* Hızlı analiz (ana sayfa başlığı) */
@@ -163,6 +179,37 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   color: var(--text); padding: 9px 14px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow);
 }
 .quick-analyze input:focus { outline: none; border-color: var(--accent); }
+
+/* ── Otomatik gece taraması paneli ── */
+.autoscan {
+  background: var(--accent-grad); color: #fff; border-radius: 16px;
+  padding: 20px 22px; margin-bottom: 18px; box-shadow: var(--shadow-lg);
+  position: relative; overflow: hidden;
+}
+.autoscan::after {
+  content: ""; position: absolute; right: -40px; top: -40px; width: 180px; height: 180px;
+  background: radial-gradient(circle, rgba(255,255,255,.18), transparent 70%);
+}
+.as-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; position: relative; }
+.as-ico { width: 38px; height: 38px; border-radius: 10px; background: rgba(255,255,255,.18);
+  display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+.as-title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+.as-sub { font-size: 12px; opacity: .85; margin-top: 1px; }
+.as-pill { margin-left: auto; font-size: 11px; font-weight: 600; padding: 5px 12px;
+  border-radius: 99px; background: rgba(255,255,255,.18); display: inline-flex; align-items: center; gap: 6px; }
+.as-pill.live { background: #fff; color: var(--accent); }
+.as-pill .ti { font-size: 13px; }
+.as-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; position: relative; }
+.as-stat { background: rgba(255,255,255,.12); border-radius: 11px; padding: 12px 14px; }
+.as-stat-num { font-size: 22px; font-weight: 700; line-height: 1.05; }
+.as-stat-lbl { font-size: 10px; opacity: .85; text-transform: uppercase; letter-spacing: .05em; margin-top: 5px; }
+.as-actions { display: flex; gap: 8px; margin-top: 16px; position: relative; flex-wrap: wrap; }
+.as-btn { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.28); color: #fff;
+  padding: 7px 14px; border-radius: 9px; font-size: 13px; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.as-btn:hover { background: rgba(255,255,255,.26); }
+.as-btn.solid { background: #fff; color: var(--accent); border-color: #fff; font-weight: 600; }
+@media (max-width: 600px) { .as-stats { grid-template-columns: repeat(2, 1fr); } }
 
 /* Günlük rapor kahramanı */
 .report-hero { border: 1px solid var(--border); }
@@ -272,6 +319,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .setup-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
   max-width: 460px; width: 100%; padding: 28px; box-shadow: var(--shadow-lg);
+  max-height: calc(100vh - 40px); overflow-y: auto;
 }
 .scan-type { display: inline-flex; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 8px; padding: 2px; gap: 2px; }
@@ -600,6 +648,33 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
       Anahtar almak için: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>
     </div>
 
+    <div id="autoscanSettings" style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-radar-2" style="color:var(--accent)"></i> Otomatik Gece Taraması
+      </div>
+      <div class="setup-desc">Envanterdeki kanalların canlı yayınları bu saatlerde, belirlenen aralıkla otomatik analiz edilir. Değişiklikler anında geçerli olur (yeniden başlatma gerekmez).</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;cursor:pointer">
+        <input type="checkbox" id="asEnabled" style="width:16px;height:16px;accent-color:var(--accent)">
+        Otomatik tarama açık
+      </label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="add-field"><label>Başlangıç saati</label><input id="asStart" type="time"></div>
+        <div class="add-field"><label>Bitiş saati</label><input id="asEnd" type="time"></div>
+        <div class="add-field"><label>Aralık (dk) — kaç dk'da bir yayın</label><input id="asInterval" type="number" min="1" max="180"></div>
+        <div class="add-field"><label>İlk keşif geriye-bakış (saat)</label><input id="asLookback" type="number" min="1" max="168"></div>
+        <div class="add-field"><label>Gecelik üst sınır (max video)</label><input id="asCap" type="number" min="1" max="500"></div>
+        <div class="add-field"><label>Saat dilimi ofseti (TR=3)</label><input id="asTz" type="number" min="-12" max="14"></div>
+      </div>
+      <button class="btn primary full" onclick="saveAutoScanSettings()" style="margin-top:10px"><i class="ti ti-device-floppy"></i> Tarama Ayarlarını Kaydet</button>
+
+      <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border)">
+        <div style="font-size:12px;color:var(--dim);margin-bottom:8px;line-height:1.5">
+          <i class="ti ti-wand" style="color:var(--accent)"></i> Sürekli ekranda olan markaları (köşe logosu / title sponsor — ör. A101) otomatik <strong>ana sponsor</strong> yapıp köşe logosunu saymaz; sadece gerçek reklamları (alt bant vb.) sayar. Şişik geçmiş veriyi düzeltir.
+        </div>
+        <button class="btn full" onclick="fixSponsors(this)"><i class="ti ti-sparkles"></i> Şişik Veriyi Düzelt (Sponsorları Yeniden Hesapla)</button>
+      </div>
+    </div>
+
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
       <div class="setup-title" style="font-size:15px">👤 Kullanıcılar</div>
       <div class="setup-desc">Giriş yapabilecek hesaplar. Buradan yeni hesap açabilirsin.</div>
@@ -617,7 +692,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
       <div class="brand-icon">▶</div>
       <div>
         <div class="brand-name">Reklam Tespit</div>
-        <div class="brand-ver">v3 · Multi-Channel</div>
+        <div class="brand-ver">v4 · Otomatik Tarama</div>
       </div>
     </div>
 
@@ -768,8 +843,63 @@ async function refreshKey() {
     $('setupOv').style.display = 'flex';
   }
 }
-function openSetup() { $('setupOv').style.display = 'flex'; setTimeout(()=>$('setupKey').focus(),50); loadUsers(); }
+function openSetup(section) {
+  $('setupOv').style.display = 'flex';
+  loadUsers();
+  loadAutoScanSettings();
+  if (section === 'autoscan') {
+    setTimeout(() => { const el = $('autoscanSettings'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
+  } else {
+    setTimeout(() => $('setupKey').focus(), 50);
+  }
+}
 function closeSetup() { $('setupOv').style.display = 'none'; }
+
+async function loadAutoScanSettings() {
+  try {
+    const d = await (await fetch('/api/auto-scan/settings')).json();
+    const a = d.auto_scan || {};
+    if ($('asEnabled')) $('asEnabled').checked = a.enabled !== false;
+    if ($('asStart')) $('asStart').value = a.start || '03:00';
+    if ($('asEnd')) $('asEnd').value = a.end || '09:30';
+    if ($('asInterval')) $('asInterval').value = a.interval_min ?? 15;
+    if ($('asLookback')) $('asLookback').value = a.lookback_hours ?? 24;
+    if ($('asCap')) $('asCap').value = a.nightly_cap ?? 30;
+    if ($('asTz')) $('asTz').value = a.tz_offset ?? 3;
+  } catch (e) {}
+}
+
+async function fixSponsors(btn) {
+  if (!confirm('Sürekli ekranda olan markalar (köşe logoları) ana sponsor yapılıp köşe logosu sayımdan düşülecek, tüm videolar yeniden hesaplanacak. Devam?')) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Hesaplanıyor...'; }
+  try {
+    const d = await (await fetch('/api/maintenance/auto-sponsors', {method:'POST'})).json();
+    const n = Object.values(d.flagged || {}).reduce((s,a)=>s+a.length,0);
+    toast(`${n} marka ana sponsor yapıldı, veriler yeniden hesaplandı`, 'success', 5000);
+  } catch (e) { toast('Hata: ' + e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-sparkles"></i> Şişik Veriyi Düzelt (Sponsorları Yeniden Hesapla)'; }
+  if (state.page === 'home') loadHome();
+}
+
+async function saveAutoScanSettings() {
+  const payload = {
+    enabled: $('asEnabled').checked,
+    start: $('asStart').value || '03:00',
+    end: $('asEnd').value || '09:30',
+    interval_min: parseInt($('asInterval').value) || 15,
+    lookback_hours: parseInt($('asLookback').value) || 24,
+    nightly_cap: parseInt($('asCap').value) || 30,
+    tz_offset: parseInt($('asTz').value),
+  };
+  if (isNaN(payload.tz_offset)) payload.tz_offset = 3;
+  const d = await (await fetch('/api/auto-scan/settings', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })).json();
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+  toast('Tarama ayarları kaydedildi', 'success');
+  if (state.page === 'home') loadAutoScanPanel();
+}
 
 async function loadUsers() {
   const box = $('userList');
@@ -891,6 +1021,9 @@ async function loadHome() {
       </div>
     </div>`;
 
+  // ── Otomatik gece taraması paneli (async doldurulur) ──
+  html += `<div id="autoScanPanel"></div>`;
+
   // ── Günlük rapor: bugün öne çıkan markalar ──
   const useToday = today.video_count > 0;
   const src = useToday ? today : week;
@@ -910,6 +1043,7 @@ async function loadHome() {
     html += `<div class="report-brands">` + brands.map((b, i) => `
       <div class="report-brand" onclick="openBrand('${jsq(b.marka)}')">
         <span class="rb-rank">${i + 1}</span>
+        ${brandAvatar(b.marka)}
         <span class="rb-name">${esc(b.marka)}</span>
         <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((b.count/max)*100)}%"></span></span>
         <span class="rb-count">${b.count}</span>
@@ -958,6 +1092,89 @@ async function loadHome() {
   html += `</div>`;
 
   $('main').innerHTML = html;
+  loadAutoScanPanel();
+}
+
+// ─── Otomatik gece taraması paneli ───
+function _fmtClock(iso) {
+  if (!iso) return '—';
+  // iso etkin yerel saat (tz uygulanmış) — Z eklemeden yorumla
+  const m = String(iso).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return '—';
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const day = `${m[1]}-${m[2]}-${m[3]}`;
+  const hm = `${m[4]}:${m[5]}`;
+  if (day === today) return `bugün ${hm}`;
+  return `${m[3]}.${m[2]} ${hm}`;
+}
+
+async function loadAutoScanPanel() {
+  const box = $('autoScanPanel');
+  if (!box) return;
+  let d;
+  try { d = await (await fetch('/api/auto-scan/status')).json(); }
+  catch (e) { box.innerHTML = ''; return; }
+  window._asStatus = d;
+  const w = d.window || {};
+  const on = d.enabled;
+  const pillCls = d.in_window ? 'as-pill live' : 'as-pill';
+  const pillTxt = !on ? '<i class="ti ti-player-pause"></i> Kapalı'
+    : (d.in_window ? '<i class="ti ti-broadcast"></i> Tarama penceresinde'
+                   : '<i class="ti ti-moon"></i> Beklemede');
+  const lives = d.recent_lives || [];
+
+  let html = `<div class="autoscan">
+    <div class="as-head">
+      <div class="as-ico"><i class="ti ti-radar-2"></i></div>
+      <div>
+        <div class="as-title">Otomatik Gece Taraması</div>
+        <div class="as-sub">Her gün ${esc(w.start||'03:00')}–${esc(w.end||'09:30')} · her ${d.interval_min||15} dk'da bir canlı yayın · kanalların canlı yayınları</div>
+      </div>
+      <span class="${pillCls}">${pillTxt}</span>
+    </div>
+    <div class="as-stats">
+      <div class="as-stat"><div class="as-stat-num">${d.tonight_analyzed||0}<span style="font-size:13px;opacity:.7">/${d.nightly_cap||30}</span></div><div class="as-stat-lbl">Bu gece analiz</div></div>
+      <div class="as-stat"><div class="as-stat-num">${d.tonight_found||0}</div><div class="as-stat-lbl">Bu gece bulunan</div></div>
+      <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.last_run_iso)}</div><div class="as-stat-lbl">Son çalışma</div></div>
+      <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.next_run_iso)}</div><div class="as-stat-lbl">Sıradaki çalışma</div></div>
+    </div>
+    <div class="as-actions">
+      <button class="as-btn solid" onclick="runAutoScanNow(this)"><i class="ti ti-player-play"></i> Şimdi bir yayın tara</button>
+      <button class="as-btn" onclick="openSetup('autoscan')"><i class="ti ti-settings"></i> Saatleri ayarla</button>
+    </div>
+  </div>`;
+
+  // Bu gece yakalanan canlı yayınlar
+  html += `<div class="section">
+    <div class="section-head">
+      <div class="section-title-lg"><i class="ti ti-broadcast" style="color:var(--accent)"></i> Yakalanan Canlı Yayınlar</div>
+      <div class="report-meta">${lives.length} yayın</div>
+    </div>`;
+  if (!lives.length) {
+    html += `<div class="empty-card" style="border:none;background:transparent">Henüz canlı yayın yakalanmadı. Tarama penceresinde (${esc(w.start||'03:00')}–${esc(w.end||'09:30')}) çalışır; hemen denemek için "Şimdi bir yayın tara".</div>`;
+  } else {
+    html += lives.map(v => {
+      const done = v.analyzed;
+      return `<div class="lb-row" onclick="${done ? `goVideo('${jsq(v.video_id)}')` : ''}" style="${done?'':'cursor:default'}">
+        <i class="ti ${done?'ti-circle-check':'ti-clock-hour-4'}" style="font-size:18px;color:${done?'var(--green)':'var(--amber)'};flex-shrink:0"></i>
+        <div class="lb-name" style="width:auto;flex:1">${esc(v.title || v.video_id)}</div>
+        <div class="lb-meta">${esc((v.seen_at||'').slice(11,16))} · ${done?'analiz edildi':'sırada'}</div>
+      </div>`;
+    }).join('');
+  }
+  html += `</div>`;
+  box.innerHTML = html;
+}
+
+async function runAutoScanNow(btn) {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Taranıyor...'; }
+  try {
+    const d = await (await fetch('/api/auto-scan/run-now', {method:'POST'})).json();
+    if (d.error) { toast('Hata: ' + d.error, 'error'); }
+    else toast('Tarama tetiklendi — bir canlı yayın varsa analize alındı', 'success');
+  } catch (e) { toast('Tarama hatası', 'error'); }
+  loadAutoScanPanel();
 }
 
 async function analyzeManualUrl() {
@@ -1126,7 +1343,7 @@ function renderBrowse(d) {
 
     <div class="section">
       <div class="section-head">
-        <div class="section-title-lg">Videolar (${videos.length})</div>
+        <div class="section-title-lg">Videolar (${videos.length}) <span style="font-size:11px;color:var(--dim);font-weight:400">· en yeni önce</span></div>
         <div class="det-filters" style="margin-bottom:0">
           <div class="filter-btn ${state.browseFilter==='all'?'active':''}" onclick="setBrowseFilter('all','${esc(channelId)}')">Tümü</div>
           <div class="filter-btn ${state.browseFilter==='new'?'active':''}" onclick="setBrowseFilter('new','${esc(channelId)}')">Yeni</div>
@@ -1554,6 +1771,7 @@ async function loadChannel(id) {
       <div>
         ${top10.map(b => `
           <div class="brand-bar-row lb-row" onclick="openBrand('${jsq(b.name)}')">
+            ${brandAvatar(b.name)}
             <div class="brand-bar-name brand-link">${esc(b.name)}</div>
             <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${Math.round((b.count/max)*100)}%"></div></div>
             <div class="brand-bar-count">${b.count}</div>
@@ -1796,6 +2014,7 @@ function renderBrandLeaderboard() {
   const max = Math.max(...brands.map(metric));
   box.innerHTML = brands.slice(0, 25).map(b => `
     <div class="lb-row" onclick="openBrand('${jsq(b.marka)}')">
+      ${brandAvatar(b.marka)}
       <div class="lb-name">${esc(b.marka)}</div>
       <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${Math.round((metric(b)/max)*100)}%"></div></div>
       <div class="lb-meta"><strong>${b.channel_count} kanal</strong> <span>· ${b.count} reklam · ${b.video_count} video</span></div>
@@ -1865,7 +2084,7 @@ async function loadBrandDetail(name) {
     <div class="page-header">
       <div>
         <div style="margin-bottom:6px">${back}</div>
-        <h1>${esc(d.marka)}</h1>
+        <h1 style="display:flex;align-items:center;gap:10px">${brandAvatar(d.marka, true)} ${esc(d.marka)}</h1>
         <div class="subtitle">${d.total} reklam · ${d.channel_count} kanal · ${d.video_count} video</div>
       </div>
       <div class="export-bar">
@@ -2064,6 +2283,22 @@ function overlayFlag(i, flag, value) {
 
 function jsq(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
+// Marka logosu: baş-harf avatarı + en iyi-çaba favicon (.com.tr → .com).
+// Favicon yüklenemezse baş harf kalır (kırık görsel olmaz).
+function brandAvatar(name, lg) {
+  const init = ((String(name || '?').trim()[0]) || '?').toUpperCase();
+  const dom = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let img = '';
+  if (dom) {
+    const tr = `https://icons.duckduckgo.com/ip3/${dom}.com.tr.ico`;
+    const com = `https://icons.duckduckgo.com/ip3/${dom}.com.ico`;
+    img = `<img src="${tr}" loading="lazy"
+      onload="this.style.opacity=1;var p=this.parentElement.querySelector('.brand-ava-init');if(p)p.style.opacity=0"
+      onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${com}'}else{this.remove()}">`;
+  }
+  return `<span class="brand-ava${lg ? ' lg' : ''}"><span class="brand-ava-init">${esc(init)}</span>${img}</span>`;
+}
+
 function renderBrandReport(report) {
   window._brandReport = report;
   return report.map((b, i) => {
@@ -2087,6 +2322,7 @@ function renderBrandReport(report) {
     return `<div class="brand-card${b.is_main_sponsor ? ' is-sponsor' : ''}">
       <div class="brand-card-head" onclick="toggleBrandFrames(${i})">
         <i class="ti ti-chevron-right brand-caret" id="bcaret-${i}"></i>
+        ${brandAvatar(b.marka, true)}
         <div class="brand-card-main">
           <div class="brand-card-title">
             <strong class="brand-link" title="Marka panelini aç" onclick="event.stopPropagation();openBrand('${jsq(b.marka)}')">${esc(b.marka)}</strong>

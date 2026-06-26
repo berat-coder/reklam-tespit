@@ -223,24 +223,84 @@ def maintenance_disk():
 
 @api_bp.route("/api/maintenance/auto-sponsors", methods=["POST"])
 def maintenance_auto_sponsors():
-    """Mevcut tüm videolarda eşik üstü markaları geriye dönük ana sponsor yapar
-    (şişik geçmiş veriyi düzeltir). Bir kez çalıştırmak yeterli."""
+    """Mevcut tüm videolarda eşik üstü VEYA sürekli ekranda olan (köşe logosu)
+    markaları geriye dönük ana sponsor + 'köşe logosunu sayma' yapar → şişik
+    geçmiş veriyi (ör. 700 A101) düzeltir. Bir kez çalıştırmak yeterli."""
     from config import AUTO_SPONSOR_THRESHOLD
+    from services.aggregates import auto_sponsor_candidates
+    from models.database import get_detections
     videos = get_all_videos(completed_only=True)
     flagged = {}
     for v in videos:
         ch = get_channel(v["channel_id"]) or {}
-        sk = {s.casefold() for s in ch.get("main_sponsors", [])}
-        for m, c in (v.get("brand_counts") or {}).items():
-            if c >= AUTO_SPONSOR_THRESHOLD and m.casefold() not in sk:
-                set_channel_brand_flag(v["channel_id"], m, "main_sponsor", True)
-                set_channel_brand_flag(v["channel_id"], m, "active_only", True)
-                sk.add(m.casefold())
-                flagged.setdefault(v["channel_id"], []).append(m)
+        agg = compute_aggregates(
+            get_detections(v["id"]), ch.get("channel_logos", []),
+            ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
+            brand_aliases=ch.get("brand_aliases", {}),
+            ignored_brands=ch.get("ignored_brands", []))
+        cands = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD,
+                                        ch.get("main_sponsors", []))
+        for m in cands:
+            set_channel_brand_flag(v["channel_id"], m, "main_sponsor", True)
+            set_channel_brand_flag(v["channel_id"], m, "active_only", True)
+            flagged.setdefault(v["channel_id"], [])
+            if m not in flagged[v["channel_id"]]:
+                flagged[v["channel_id"]].append(m)
     for v in videos:
         recompute_video_aggregates(v["id"])
     return jsonify({"ok": True, "flagged": flagged,
                     "threshold": AUTO_SPONSOR_THRESHOLD})
+
+
+# ── Otomatik gece taraması ──────────────────────────────────────────────────
+
+@api_bp.route("/api/auto-scan/settings", methods=["GET", "POST"])
+def auto_scan_settings():
+    from config import DEFAULT_AUTO_SCAN
+    cfg = load_config()
+    if request.method == "POST":
+        data = request.get_json() or {}
+        cur = dict(cfg.get("auto_scan") or DEFAULT_AUTO_SCAN)
+        # Tip-güvenli alan alımı
+        if "enabled" in data:
+            cur["enabled"] = bool(data["enabled"])
+        for key in ("start", "end"):
+            if key in data and isinstance(data[key], str) and ":" in data[key]:
+                cur[key] = data[key].strip()
+        for key in ("interval_min", "lookback_hours", "nightly_cap", "tz_offset"):
+            if key in data:
+                try:
+                    cur[key] = int(data[key])
+                except (TypeError, ValueError):
+                    pass
+        if data.get("content_type") in ("all", "live", "video"):
+            cur["content_type"] = data["content_type"]
+        cfg["auto_scan"] = cur
+        save_config(cfg)
+        return jsonify({"ok": True, "auto_scan": cur})
+    return jsonify({"auto_scan": cfg.get("auto_scan") or DEFAULT_AUTO_SCAN})
+
+
+@api_bp.route("/api/auto-scan/status")
+def auto_scan_status():
+    from services.scheduler import get_status
+    from models.database import list_live_seen
+    st = get_status()
+    # Bu gece yakalanan canlı yayınlar (panel listesi)
+    from datetime import datetime as _dt, timedelta as _td
+    since = (_dt.utcnow() - _td(hours=30)).isoformat()
+    st["recent_lives"] = list_live_seen(since=since, limit=30)
+    return jsonify(st)
+
+
+@api_bp.route("/api/auto-scan/run-now", methods=["POST"])
+def auto_scan_run_now():
+    from services.scheduler import run_tick_now, get_status
+    try:
+        run_tick_now()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, **get_status()})
 
 
 @api_bp.route("/api/daily-report")

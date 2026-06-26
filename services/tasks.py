@@ -253,15 +253,24 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
         last_scanned=datetime.utcnow().isoformat()
     )
 
+    from models.database import is_live_seen, mark_live_seen
     added = 0
     for v in res["videos"]:
         if is_video_completed(v["id"]):
+            continue
+        # Canlı yayın dedup: gece otomatik taraması ile çakışmayı önle
+        is_live = bool(v.get("is_live")) or v.get("tab") in ("streams", "live")
+        if is_live and is_live_seen(v["id"]):
             continue
         job_manager.add_video(
             v["url"],
             channel_id=channel_id,
             channel_name=channel_name,
         )
+        if is_live:
+            mark_live_seen(v["id"], channel_id=channel_id,
+                           title=v.get("title", ""), url=v.get("url", ""),
+                           analyzed=True)
         added += 1
     print(f"[KANAL-TARAMA] {channel_name}: {added} yeni video sıraya alındı")
 
@@ -604,11 +613,11 @@ def _analyze_video_core(
     )
     save_detections(video_id, detections)
 
-    # ── Otomatik ANA SPONSOR: bir videoda eşik üstü görünen marka şişik veridir;
-    #    ana sponsor + köşe-logosu-sayma işaretle, sayımdan düşür, detayda kalsın ──
-    sponsor_keys = {s.casefold() for s in main_sponsors}
-    auto = [m for m, c in agg["brand_counts"].items()
-            if c >= AUTO_SPONSOR_THRESHOLD and m.casefold() not in sponsor_keys]
+    # ── Otomatik ANA SPONSOR: eşik üstü VEYA sürekli ekranda olan (köşe logosu /
+    #    title sponsor, ör. A101) marka şişik veridir; ana sponsor + köşe-logosu-
+    #    sayma işaretle → sayımdan düşür, sadece gerçek reklamlar (alt bant) kalsın ──
+    from services.aggregates import auto_sponsor_candidates
+    auto = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD, main_sponsors)
     if auto:
         for m in auto:
             set_channel_brand_flag(channel_id, m, "main_sponsor", True)

@@ -248,6 +248,29 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     }
 
 
+def auto_sponsor_candidates(agg, threshold, existing_sponsors=None):
+    """compute_aggregates çıktısından otomatik ANA SPONSOR (+active_only) yapılacak
+    markaları döndürür. İki sinyal:
+      (a) tek videoda eşik üstü görünüm (şişik veri),
+      (b) KALICI bindirme — ekranda sürekli (ratio≥0.80) = köşe logosu / title
+          sponsor (ör. A101). Bunlar köşe logosu olarak süzülmeli, sadece gerçek
+          reklamları (alt bant vb.) sayılmalı.
+    Kanal logoları hariç. Döner: ['A101', ...]"""
+    existing = {_norm_key(s) for s in (existing_sponsors or [])}
+    out, seen = [], set()
+    for m, c in (agg.get("brand_counts") or {}).items():
+        k = _norm_key(m)
+        if c >= threshold and k not in existing and k not in seen:
+            out.append(m); seen.add(k)
+    for o in (agg.get("persistent_overlays") or []):
+        k = _norm_key(o.get("marka", ""))
+        if o.get("is_channel_logo") or k in existing or k in seen:
+            continue
+        if o.get("ratio", 0) >= 0.80 and o.get("frame_count", 0) >= 3:
+            out.append(o["marka"]); seen.add(k)
+    return out
+
+
 def suggest_channel_logos(detections, channel_logos, analyzed):
     """Köşe/üst/alt konumda yüksek tekrarla görünen markaları kanal logosu adayı
     olarak önerir (eşik: max(3, frame*0.30)). Persist kararını çağıran verir."""
