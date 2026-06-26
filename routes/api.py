@@ -15,6 +15,7 @@ from models.database import (
     create_user, list_users, delete_user,
     add_brand_alias, bump_ignore_and_maybe_suggest, approve_suggestion,
     reject_suggestion, remove_rule, get_channel_rules,
+    migrate_sqlite_to_pg,
 )
 from services.aggregates import compute_aggregates
 
@@ -184,6 +185,12 @@ def _since_from_days():
     if days <= 0:
         return None
     return (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+
+@api_bp.route("/api/maintenance/migrate-db", methods=["POST"])
+def maintenance_migrate_db():
+    """SQLite → PostgreSQL tek seferlik veri taşıma."""
+    return jsonify(migrate_sqlite_to_pg())
 
 
 @api_bp.route("/api/maintenance/disk")

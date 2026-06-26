@@ -6,9 +6,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# DATABASE_URL varsa PostgreSQL, yoksa yerel SQLite (kurulum gerektirmez)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+IS_PG = DATABASE_URL.startswith("postgres")
 DB_PATH = Path(os.environ.get("DATA_DIR", Path(__file__).parent.parent)) / "data.db"
 
-_SCHEMA = """
+# Otomatik artan birincil anahtar (detections.id) lehçeye göre
+_AUTO_ID = "BIGSERIAL PRIMARY KEY" if IS_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+_SCHEMA = ("""
 CREATE TABLE IF NOT EXISTS channels (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL DEFAULT '',
@@ -43,7 +49,7 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 
 CREATE TABLE IF NOT EXISTS detections (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         __AUTO_ID__,
     video_id   TEXT NOT NULL,
     idx        INTEGER NOT NULL,
     timestamp  TEXT NOT NULL DEFAULT '',
@@ -64,7 +70,19 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     created_at    TEXT
 );
-"""
+""").replace("__AUTO_ID__", _AUTO_ID)
+
+# Additive migration'lar (her iki lehçe) — (tablo, sütun, tip-tanım)
+_MIGRATIONS = [
+    ("channels", "avatar_url", "TEXT NOT NULL DEFAULT ''"),
+    ("channels", "main_sponsors", "TEXT NOT NULL DEFAULT '[]'"),
+    ("channels", "sponsor_active_only", "TEXT NOT NULL DEFAULT '[]'"),
+    ("channels", "brand_aliases", "TEXT NOT NULL DEFAULT '{}'"),
+    ("channels", "ignored_brands", "TEXT NOT NULL DEFAULT '[]'"),
+    ("channels", "rule_state", "TEXT NOT NULL DEFAULT '{}'"),
+    ("videos", "persistent_overlays", "TEXT NOT NULL DEFAULT '[]'"),
+    ("detections", "manual_clean", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 # ── Kullanıcılar (çoklu giriş) ─────────────────────────────────────────────────
@@ -103,12 +121,49 @@ def delete_user(username):
         conn.execute("DELETE FROM users WHERE username = ?", ((username or "").strip(),))
 
 
+class _PGConn:
+    """psycopg2 bağlantısını sqlite3'ün .execute() API'sine benzetir; '?'→'%s'."""
+    def __init__(self, raw):
+        self._raw = raw
+
+    def execute(self, sql, params=()):
+        from psycopg2.extras import RealDictCursor
+        cur = self._raw.cursor(cursor_factory=RealDictCursor)
+        cur.execute(sql.replace("?", "%s"), params)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = self._raw.cursor()
+        cur.executemany(sql.replace("?", "%s"), list(seq))
+        return cur
+
+    def executescript(self, script):
+        cur = self._raw.cursor()
+        for stmt in script.split(";"):
+            if stmt.strip():
+                cur.execute(stmt)
+        return cur
+
+    def commit(self):
+        self._raw.commit()
+
+    def rollback(self):
+        self._raw.rollback()
+
+    def close(self):
+        self._raw.close()
+
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    if IS_PG:
+        import psycopg2
+        conn = _PGConn(psycopg2.connect(DATABASE_URL))
+    else:
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
         conn.commit()
@@ -121,22 +176,62 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
-        conn.executescript(_SCHEMA)
-        # Additive migration'lar — eski data.db'ler için (sütun varsa sessizce geç)
-        for stmt in (
-            "ALTER TABLE channels ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE channels ADD COLUMN main_sponsors TEXT NOT NULL DEFAULT '[]'",
-            "ALTER TABLE channels ADD COLUMN sponsor_active_only TEXT NOT NULL DEFAULT '[]'",
-            "ALTER TABLE channels ADD COLUMN brand_aliases TEXT NOT NULL DEFAULT '{}'",
-            "ALTER TABLE channels ADD COLUMN ignored_brands TEXT NOT NULL DEFAULT '[]'",
-            "ALTER TABLE channels ADD COLUMN rule_state TEXT NOT NULL DEFAULT '{}'",
-            "ALTER TABLE videos ADD COLUMN persistent_overlays TEXT NOT NULL DEFAULT '[]'",
-            "ALTER TABLE detections ADD COLUMN manual_clean INTEGER NOT NULL DEFAULT 0",
-        ):
-            try:
-                conn.execute(stmt)
-            except Exception:
-                pass
+        if IS_PG:
+            for stmt in _SCHEMA.split(";"):
+                if stmt.strip():
+                    conn.execute(stmt)
+            for t, c, typ in _MIGRATIONS:
+                conn.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {typ}")
+        else:
+            conn.executescript(_SCHEMA)
+            for t, c, typ in _MIGRATIONS:
+                try:
+                    conn.execute(f"ALTER TABLE {t} ADD COLUMN {c} {typ}")
+                except Exception:
+                    pass
+
+
+def migrate_sqlite_to_pg():
+    """Tek seferlik: eski SQLite (DATA_DIR/data.db) verisini PostgreSQL'e kopyalar.
+    Yalnız PG aktif, SQLite dosyası var ve PG boşsa çalışır (idempotent)."""
+    if not IS_PG:
+        return {"skipped": "Postgres aktif değil"}
+    if not DB_PATH.exists():
+        return {"skipped": "SQLite dosyası yok", "path": str(DB_PATH)}
+    with get_db() as pg:
+        n = pg.execute("SELECT COUNT(*) AS n FROM channels").fetchone()["n"]
+    if n and int(n) > 0:
+        return {"skipped": "PG zaten dolu", "channels": int(n)}
+
+    src = sqlite3.connect(str(DB_PATH))
+    src.row_factory = sqlite3.Row
+    counts = {}
+    try:
+        with get_db() as pg:
+            # FK sırası: channels → videos → users → detections (id hariç, PG üretir)
+            for table, skip in (("channels", ()), ("videos", ()),
+                                ("users", ()), ("detections", ("id",))):
+                try:
+                    rows = src.execute(f"SELECT * FROM {table}").fetchall()
+                except Exception:
+                    counts[table] = 0
+                    continue
+                c = 0
+                for r in rows:
+                    d = {k: r[k] for k in r.keys() if k not in skip}
+                    if not d:
+                        continue
+                    cols = list(d.keys())
+                    ph = ",".join(["?"] * len(cols))
+                    pg.execute(
+                        f"INSERT INTO {table} ({','.join(cols)}) VALUES ({ph})",
+                        tuple(d[k] for k in cols),
+                    )
+                    c += 1
+                counts[table] = c
+    finally:
+        src.close()
+    return {"migrated": counts}
 
 
 # ── Kanal ─────────────────────────────────────────────────────────────────────
