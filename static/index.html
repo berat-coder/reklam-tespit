@@ -615,6 +615,28 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 .toast.success { border-left-color: var(--green); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
+/* Cookie/süre-doldu uyarı bannerı (üstte sabit) */
+.cookie-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 80;
+  background: var(--red); color: #fff; padding: 9px 18px; font-size: 13px;
+  display: flex; align-items: center; gap: 10px; box-shadow: var(--shadow-lg);
+}
+.cookie-banner .ti { font-size: 16px; }
+.cookie-banner code { background: rgba(255,255,255,.2); padding: 1px 5px; border-radius: 4px; }
+
+/* Ana sayfa sağlık şeridi */
+.health-strip {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 14px; font-size: 12px; color: var(--dim); margin-bottom: 18px;
+  box-shadow: var(--shadow);
+}
+.health-strip strong { color: var(--text); font-weight: 600; }
+.hs-sep { color: var(--dimmer); }
+.hs-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hs-dot.ok { background: var(--green); }
+.hs-dot.bad { background: var(--red); }
+
 /* Rol: kullanıcı (viewer) → tüm değiştirme kontrolleri gizli (sunucu da zorlar) */
 body.viewer .admin-only { display: none !important; }
 .role-badge { font-size: 9px; padding: 2px 7px; border-radius: 99px; font-weight: 600;
@@ -642,6 +664,7 @@ body.viewer .admin-only { display: none !important; }
 <body>
 
 <div class="toast-wrap" id="toastWrap"></div>
+<div id="cookieBanner" class="cookie-banner" style="display:none"></div>
 <button class="menu-toggle" id="menuToggle" aria-label="Menüyü aç/kapat" onclick="toggleSidebar()"><i class="ti ti-menu-2"></i></button>
 
 <div class="setup-overlay" id="setupOv" style="display:none" onclick="if(event.target===this)closeSetup()">
@@ -740,6 +763,9 @@ body.viewer .admin-only { display: none !important; }
         </div>
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goDashboard()" id="navDash">
           <i class="ti ti-chart-bar"></i> Panel
+        </div>
+        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goStatus()" id="navStatus">
+          <i class="ti ti-activity-heartbeat"></i> Durum
         </div>
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goLive(null)" id="navLive" style="display:none">
           <i class="ti ti-broadcast" style="color:var(--accent)"></i> Canlı Analiz
@@ -851,7 +877,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   goHome();
   pollQueue();
   loadRecentSidebar();
+  loadHealth();
   setInterval(loadRecentSidebar, 30000);
+  setInterval(loadHealth, 60000);
 });
 
 // ─── Key ───
@@ -1055,8 +1083,9 @@ async function loadHome() {
       </div>
     </div>`;
 
-  // ── Otomatik gece taraması paneli (async doldurulur) ──
+  // ── Otomatik gece taraması paneli + sağlık şeridi (async doldurulur) ──
   html += `<div id="autoScanPanel"></div>`;
+  html += `<div id="healthStrip"></div>`;
 
   // ── Günlük rapor: bugün öne çıkan markalar ──
   const useToday = today.video_count > 0;
@@ -1127,6 +1156,7 @@ async function loadHome() {
 
   $('main').innerHTML = html;
   loadAutoScanPanel();
+  loadHealth();
 }
 
 // ─── Otomatik gece taraması paneli ───
@@ -1946,10 +1976,132 @@ function renderDonut(items) {
 
 // ─── Video Detail ───
 function setActiveNav(active) {
-  ['navHome', 'navDash'].forEach(n => {
+  ['navHome', 'navDash', 'navStatus'].forEach(n => {
     const el = $(n);
     if (el) el.classList.toggle('active', n === active);
   });
+}
+
+// ─── Durum (Sistem Sağlığı & Tarama Geçmişi) ───
+function goStatus() {
+  stopLivePolling();
+  state.page = 'status';
+  state.channelId = null; state.videoId = null;
+  setActiveNav('navStatus');
+  loadStatus();
+}
+
+function _agoTr(iso) {
+  if (!iso) return 'hiç';
+  const t = Date.parse(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+  if (isNaN(t)) return '—';
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + ' sn önce';
+  if (s < 3600) return Math.floor(s/60) + ' dk önce';
+  if (s < 86400) return Math.floor(s/3600) + ' saat önce';
+  return Math.floor(s/86400) + ' gün önce';
+}
+
+const _LOG_KIND = {channel_scan:'Kanal tarama', video:'Video analiz', auto_tick:'Oto-tarama'};
+
+async function loadStatus() {
+  let d;
+  try { d = await (await fetch('/api/scan-log?limit=100')).json(); }
+  catch (e) { $('main').innerHTML = '<div class="empty-card">Durum yüklenemedi</div>'; return; }
+  const h = d.health || {};
+  const log = d.log || [];
+  const failed = d.failed_lives || [];
+
+  let html = `<div class="page-header"><div>
+      <h1>Sistem Durumu</h1>
+      <div class="subtitle">Sağlık, tarama geçmişi ve başarısız işler</div>
+    </div></div>`;
+
+  // Sağlık kartları
+  const cookieOk = h.cookie_ok !== false;
+  html += `<div class="stat-tiles">
+    <div class="stat-tile ${cookieOk?'green':'red'}">
+      <div class="stat-tile-num" style="font-size:16px;padding-top:4px">${cookieOk?'✓ Geçerli':'✕ Süresi dolmuş'}</div>
+      <div class="stat-tile-lbl">YouTube Cookie</div></div>
+    <div class="stat-tile">
+      <div class="stat-tile-num" style="font-size:15px;padding-top:4px">${_agoTr(h.last_success_iso)}</div>
+      <div class="stat-tile-lbl">Son Başarılı Tarama</div></div>
+    <div class="stat-tile ${h.errors_24h?'amber':''}">
+      <div class="stat-tile-num">${h.errors_24h||0}</div>
+      <div class="stat-tile-lbl">Son 24s Hata</div></div>
+    <div class="stat-tile ${failed.length?'red':''}">
+      <div class="stat-tile-num">${failed.length}</div>
+      <div class="stat-tile-lbl">Başarısız Yayın</div></div>
+  </div>`;
+
+  if (!cookieOk) {
+    html += `<div class="section" style="border-color:var(--red);background:rgba(229,72,77,0.05)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <i class="ti ti-alert-triangle" style="font-size:22px;color:var(--red)"></i>
+        <div><strong>YouTube cookie'sinin süresi dolmuş.</strong>
+        <div style="font-size:12px;color:var(--dim);margin-top:2px">Taramalar başarısız oluyor. ${IS_ADMIN?'Railway <code>YOUTUBE_COOKIES</code> değişkenini güncel cookie ile yenileyin.':'Bir yöneticiye haber ver.'}</div></div>
+      </div></div>`;
+  }
+
+  // Başarısız yayınlar
+  if (failed.length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Başarısız / Atlanan Canlı Yayınlar</div></div>`;
+    html += failed.map(v => `<div class="lb-row" style="cursor:default">
+      <i class="ti ${v.status==='permanent'?'ti-ban':'ti-alert-circle'}" style="font-size:18px;color:${v.status==='permanent'?'var(--dimmer)':'var(--red)'};flex-shrink:0"></i>
+      <div class="lb-name" style="width:auto;flex:1">${esc(v.title||v.video_id)}</div>
+      <div class="lb-meta">${v.status==='permanent'?'kalıcı hata':(v.attempts+' deneme')} · ${esc((v.error||'').slice(0,40))}</div>
+    </div>`).join('') + `</div>`;
+  }
+
+  // Tarama geçmişi
+  html += `<div class="section"><div class="section-head"><div class="section-title-lg">Tarama Geçmişi</div><div class="report-meta">son ${log.length} olay</div></div>`;
+  if (!log.length) {
+    html += `<div class="empty-card" style="border:none;background:transparent">Henüz olay yok.</div>`;
+  } else {
+    html += `<div style="display:flex;flex-direction:column">` + log.map(e => {
+      const col = e.status==='ok'?'var(--green)':(e.status==='error'?'var(--red)':'var(--dim)');
+      const ico = e.status==='ok'?'ti-circle-check':(e.status==='error'?'ti-alert-circle':'ti-info-circle');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border);font-size:13px">
+        <i class="ti ${ico}" style="color:${col};flex-shrink:0"></i>
+        <span style="width:96px;color:var(--dim);font-size:11px;flex-shrink:0">${_LOG_KIND[e.kind]||esc(e.kind)}</span>
+        <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.target||'')}${e.message?` <span style="color:var(--dim)">— ${esc(e.message)}</span>`:''}</span>
+        <span style="color:var(--dimmer);font-size:11px;flex-shrink:0">${_agoTr(e.ts)}</span>
+      </div>`;
+    }).join('') + `</div>`;
+  }
+  html += `</div>`;
+  $('main').innerHTML = html;
+}
+
+// ─── Sağlık şeridi + global cookie uyarısı ───
+async function loadHealth() {
+  let h;
+  try { h = await (await fetch('/api/health')).json(); }
+  catch (e) { return; }
+  const banner = $('cookieBanner');
+  if (banner) {
+    if (h.cookie_ok === false) {
+      banner.style.display = 'flex';
+      banner.innerHTML = `<i class="ti ti-alert-triangle"></i>
+        <span>YouTube cookie süresi dolmuş — taramalar çalışmıyor. ${IS_ADMIN?'Ayarlardan/Railway üzerinden cookie yenileyin.':'Yöneticiye bildir.'}</span>
+        <span style="margin-left:auto;cursor:pointer;opacity:.8" onclick="goStatus()">Durum →</span>`;
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  // Ana sayfadaki şerit
+  const strip = $('healthStrip');
+  if (strip) {
+    const ok = h.cookie_ok !== false;
+    strip.innerHTML = `<div class="health-strip">
+      <span class="hs-dot ${ok?'ok':'bad'}"></span>
+      <span>Cookie: <strong>${ok?'geçerli':'süresi dolmuş'}</strong></span>
+      <span class="hs-sep">·</span>
+      <span>Son başarılı tarama: <strong>${_agoTr(h.last_success_iso)}</strong></span>
+      ${h.errors_24h?`<span class="hs-sep">·</span><span style="color:var(--red)">${h.errors_24h} hata (24s)</span>`:''}
+      <span style="margin-left:auto;cursor:pointer;color:var(--accent)" onclick="goStatus()">Detay →</span>
+    </div>`;
+  }
 }
 
 function goVideo(id) {

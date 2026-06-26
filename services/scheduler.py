@@ -18,8 +18,9 @@ from datetime import datetime, timedelta
 
 from config import load_config
 from models.database import (
-    is_live_seen, mark_live_seen, next_pending_live, count_pending_live,
-    prune_live_seen, is_video_completed, kv_get, kv_set,
+    is_live_seen, mark_live_seen, mark_live_status, next_pending_live,
+    count_pending_live, prune_live_seen, is_video_completed,
+    kv_get, kv_set, log_event,
 )
 
 _STATE_KEY = "auto_scan_state"
@@ -102,16 +103,20 @@ def _analyze_one(asc, state):
             return None
         vid = row["video_id"]
         if is_video_completed(vid):
-            mark_live_seen(vid, analyzed=True)   # zaten bitmiş/analiz edilmiş → atla
+            mark_live_status(vid, "done")        # zaten bitmiş/analiz edilmiş → atla
             continue
         from services.job_manager import JOB_MANAGER
         url = row.get("url") or f"https://www.youtube.com/watch?v={vid}"
         JOB_MANAGER.add_video(url, channel_id=row.get("channel_id") or None,
                               channel_name="")
-        mark_live_seen(vid, analyzed=True)
+        # 'queued' + deneme sayacı; başarı/hata'yı _analyze_video_core günceller
+        mark_live_status(vid, "queued", inc_attempt=True)
         state["tonight_analyzed"] = state.get("tonight_analyzed", 0) + 1
+        attempt = (row.get("attempts") or 0) + 1
+        log_event("auto_tick", row.get("title") or vid, "info", "enqueued",
+                  f"analize gönderildi (deneme {attempt})")
         print(f"[OTO-TARAMA] analize gönderildi: {row.get('title') or vid} "
-              f"({state['tonight_analyzed']}/{cap})")
+              f"({state['tonight_analyzed']}/{cap}, deneme {attempt})")
         return vid
 
 
@@ -134,6 +139,14 @@ def _tick(cfg, asc, eff_now, night_key):
     state["first_done"] = True
 
     analyzed = _analyze_one(asc, state)
+
+    # Frame depolama backstop: cap aşıldıysa en eski klasörleri buda
+    try:
+        from services.storage import prune_frames
+        from config import FRAME_STORAGE_CAP_MB
+        prune_frames(FRAME_STORAGE_CAP_MB)
+    except Exception as e:
+        print(f"[OTO-TARAMA] frame budama atlandı: {e}")
 
     state["last_tick_ts"] = int(time.time())
     state["last_run_iso"] = eff_now.isoformat()

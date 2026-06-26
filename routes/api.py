@@ -295,6 +295,28 @@ def auto_scan_status():
     return jsonify(st)
 
 
+@api_bp.route("/api/health")
+def health_endpoint():
+    """Sistem sağlığı: cookie durumu, son başarılı tarama, son 24s hata."""
+    from models.database import get_health
+    return jsonify(get_health())
+
+
+@api_bp.route("/api/scan-log")
+def scan_log_endpoint():
+    """Tarama/olay geçmişi + başarısız canlı yayınlar (Durum paneli)."""
+    from models.database import get_scan_log, list_failed_live, get_health
+    try:
+        limit = min(300, max(1, int(request.args.get("limit", 100))))
+    except (TypeError, ValueError):
+        limit = 100
+    return jsonify({
+        "health": get_health(),
+        "log": get_scan_log(limit),
+        "failed_lives": list_failed_live(30),
+    })
+
+
 @api_bp.route("/api/auto-scan/run-now", methods=["POST"])
 def auto_scan_run_now():
     from services.scheduler import run_tick_now, get_status

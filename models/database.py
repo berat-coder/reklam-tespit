@@ -84,6 +84,16 @@ CREATE TABLE IF NOT EXISTS app_kv (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS scan_log (
+    id      __AUTO_ID__,
+    ts      TEXT,
+    kind    TEXT NOT NULL DEFAULT '',
+    target  TEXT NOT NULL DEFAULT '',
+    status  TEXT NOT NULL DEFAULT 'info',
+    code    TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT ''
+);
 """).replace("__AUTO_ID__", _AUTO_ID)
 
 # Additive migration'lar (her iki lehçe) — (tablo, sütun, tip-tanım)
@@ -97,6 +107,10 @@ _MIGRATIONS = [
     ("videos", "persistent_overlays", "TEXT NOT NULL DEFAULT '[]'"),
     ("detections", "manual_clean", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "role", "TEXT NOT NULL DEFAULT 'user'"),
+    ("live_seen", "status", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("live_seen", "attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("live_seen", "last_attempt", "TEXT"),
+    ("live_seen", "error", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -169,20 +183,46 @@ def is_live_seen(video_id):
 
 
 def mark_live_seen(video_id, channel_id="", title="", url="", analyzed=False):
-    """Bir canlı yayını 'görüldü' olarak kaydet (idempotent upsert)."""
+    """Keşifte bir canlı yayını 'görüldü' olarak kaydet (idempotent upsert).
+    Yeni satır → status='pending'. Mevcut satırın durumuna dokunmaz.
+    analyzed=True (manuel tarama) → doğrudan 'done' işaretle."""
     if not video_id:
         return
+    st = "done" if analyzed else "pending"
     with get_db() as conn:
         conn.execute("""
-            INSERT INTO live_seen (video_id, channel_id, title, url, seen_at, analyzed)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO live_seen (video_id, channel_id, title, url, seen_at, analyzed, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 channel_id = COALESCE(NULLIF(excluded.channel_id, ''), live_seen.channel_id),
                 title      = COALESCE(NULLIF(excluded.title, ''),      live_seen.title),
                 url        = COALESCE(NULLIF(excluded.url, ''),        live_seen.url),
-                analyzed   = CASE WHEN excluded.analyzed = 1 THEN 1 ELSE live_seen.analyzed END
+                analyzed   = CASE WHEN excluded.analyzed = 1 THEN 1 ELSE live_seen.analyzed END,
+                status     = CASE WHEN excluded.analyzed = 1 THEN 'done' ELSE live_seen.status END
         """, (video_id, channel_id, title, url,
-              datetime.utcnow().isoformat(), int(bool(analyzed))))
+              datetime.utcnow().isoformat(), int(bool(analyzed)), st))
+
+
+def mark_live_status(video_id, status, error="", inc_attempt=False):
+    """Bir canlı yayının durumunu güncelle (satır varsa).
+    status: pending|queued|done|failed|permanent. inc_attempt=True → deneme +1."""
+    if not video_id:
+        return
+    now = datetime.utcnow().isoformat()
+    analyzed = 1 if status == "done" else 0
+    with get_db() as conn:
+        if inc_attempt:
+            conn.execute("""
+                UPDATE live_seen
+                SET status = ?, error = ?, last_attempt = ?,
+                    attempts = attempts + 1, analyzed = ?
+                WHERE video_id = ?
+            """, (status, error or "", now, analyzed, video_id))
+        else:
+            conn.execute("""
+                UPDATE live_seen SET status = ?, error = ?, analyzed = ?
+                WHERE video_id = ?
+            """, (status, error or "", analyzed, video_id))
 
 
 def list_live_seen(since=None, limit=50):
@@ -198,21 +238,49 @@ def list_live_seen(since=None, limit=50):
         return [dict(r) for r in conn.execute(q, params).fetchall()]
 
 
-def next_pending_live():
-    """Henüz analize gönderilmemiş, en son keşfedilen canlı yayın (analiz sırası)."""
+def _retry_cutoff(minutes=30):
+    return (datetime.utcnow() - __import__("datetime").timedelta(minutes=minutes)).isoformat()
+
+
+def next_pending_live(max_attempts=3):
+    """Analize gönderilecek sıradaki canlı yayın:
+    status='pending' VEYA (status='failed' & attempts<max & son deneme 30dk+ önce).
+    En son keşfedilen önce (seen_at DESC)."""
+    cut = _retry_cutoff(30)
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM live_seen WHERE analyzed = 0 ORDER BY seen_at DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("""
+            SELECT * FROM live_seen
+            WHERE status = 'pending'
+               OR (status = 'failed' AND attempts < ?
+                   AND (last_attempt IS NULL OR last_attempt < ?))
+            ORDER BY seen_at DESC LIMIT 1
+        """, (max_attempts, cut)).fetchone()
         return dict(row) if row else None
 
 
-def count_pending_live():
+def count_pending_live(max_attempts=3):
+    cut = _retry_cutoff(30)
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM live_seen WHERE analyzed = 0"
-        ).fetchone()
+        row = conn.execute("""
+            SELECT COUNT(*) AS n FROM live_seen
+            WHERE status = 'pending'
+               OR (status = 'failed' AND attempts < ?
+                   AND (last_attempt IS NULL OR last_attempt < ?))
+        """, (max_attempts, cut)).fetchone()
         return int(row["n"]) if row else 0
+
+
+def list_failed_live(limit=30):
+    """Başarısız/kalıcı-hata canlı yayınlar (Durum paneli için)."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM live_seen WHERE status IN ('failed', 'permanent')
+            ORDER BY last_attempt DESC NULLS LAST LIMIT ?
+        """, (limit,)).fetchall() if IS_PG else conn.execute("""
+            SELECT * FROM live_seen WHERE status IN ('failed', 'permanent')
+            ORDER BY last_attempt DESC LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def prune_live_seen(hours=36):
@@ -241,6 +309,73 @@ def kv_set(key, value):
             INSERT INTO app_kv (k, v) VALUES (?, ?)
             ON CONFLICT(k) DO UPDATE SET v = excluded.v
         """, (key, json.dumps(value, ensure_ascii=False)))
+
+
+# ── Tarama/olay günlüğü + sağlık ───────────────────────────────────────────────
+
+def log_event(kind, target="", status="info", code="", message=""):
+    """Bir tarama/analiz olayını kaydet. kind: 'channel_scan'|'video'|'auto_tick'
+    status: 'ok'|'error'|'info'. code: 'cookie_expired'|'video_unavailable'|..."""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO scan_log (ts, kind, target, status, code, message)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (datetime.utcnow().isoformat(), kind, (target or "")[:300],
+              status, code, (message or "")[:500]))
+    # Ara sıra buda (log şişmesin)
+    try:
+        purge_scan_log(300)
+    except Exception:
+        pass
+
+
+def get_scan_log(limit=100):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM scan_log ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def purge_scan_log(keep=300):
+    with get_db() as conn:
+        conn.execute("""
+            DELETE FROM scan_log WHERE id NOT IN (
+                SELECT id FROM scan_log ORDER BY id DESC LIMIT ?
+            )
+        """, (keep,))
+
+
+def get_health():
+    """scan_log'dan türetilmiş sistem sağlığı: cookie durumu, son başarı,
+    son 24s hata sayısı, son hata."""
+    day_ago = (datetime.utcnow() - __import__("datetime").timedelta(hours=24)).isoformat()
+    with get_db() as conn:
+        last_ok = conn.execute(
+            "SELECT ts FROM scan_log WHERE status='ok' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        last_cookie = conn.execute(
+            "SELECT ts FROM scan_log WHERE code='cookie_expired' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        errs = conn.execute(
+            "SELECT COUNT(*) AS n FROM scan_log WHERE status='error' AND ts >= ?",
+            (day_ago,)
+        ).fetchone()
+        last_err = conn.execute(
+            "SELECT ts, code, message, target FROM scan_log WHERE status='error' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    last_ok_ts = last_ok["ts"] if last_ok else None
+    last_cookie_ts = last_cookie["ts"] if last_cookie else None
+    # Cookie: son cookie hatasından sonra başarılı tarama olduysa tekrar OK sayılır
+    cookie_ok = (last_cookie_ts is None) or (bool(last_ok_ts) and last_ok_ts > last_cookie_ts)
+    return {
+        "cookie_ok": cookie_ok,
+        "cookie_error_at": last_cookie_ts,
+        "last_success_iso": last_ok_ts,
+        "errors_24h": int(errs["n"]) if errs else 0,
+        "last_error": dict(last_err) if last_err else None,
+    }
 
 
 class _PGConn:
@@ -311,6 +446,13 @@ def init_db():
                     conn.execute(f"ALTER TABLE {t} ADD COLUMN {c} {typ}")
                 except Exception:
                     pass
+        # Backfill: eski live_seen kayıtlarında analyzed=1 → status='done'
+        try:
+            conn.execute(
+                "UPDATE live_seen SET status = 'done' "
+                "WHERE analyzed = 1 AND status = 'pending'")
+        except Exception:
+            pass
 
 
 def migrate_sqlite_to_pg():

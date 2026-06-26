@@ -9,9 +9,11 @@ BASE_DIR = Path(__file__).parent
 # Kalıcı veri dizini (data.db, config.json) — Docker volume (DATA_DIR ile override).
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# Frame'ler EFEMERAL diskte tutulur (volume'u doldurmasın). Yalnız küçük data.db
-# volume'da kalır; frame'ler sadece önizleme küçük resmi, kaybolması kritik değil.
-FRAMES_DIR = Path(os.environ.get("FRAMES_DIR", BASE_DIR / "frames"))
+# Frame'ler KALICI diskte (volume) tutulur ki deploy/restart'ta kaybolmasın.
+# Yalnızca "kanıt" (reklam çıkan) kareler saklanır + toplam boyut cap'i ile
+# eski videoların kareleri otomatik temizlenir (volume dolmasın). FRAMES_DIR
+# env'i ile override edilebilir.
+FRAMES_DIR = Path(os.environ.get("FRAMES_DIR", DATA_DIR / "frames"))
 FRAMES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Görüntü tespit modeli. ÜCRETSIZ KATMAN günlük istek (RPD) kotaları:
@@ -77,6 +79,10 @@ LOWER_BAND_THRESHOLD = _float_env("LOWER_BAND_THRESHOLD", 0.06)
 AUTO_SPONSOR_THRESHOLD = _int_env("AUTO_SPONSOR_THRESHOLD", 70)
 # Shorts atlama: süresi 1..bu değer (sn) arası olan videolar Shorts sayılıp atlanır
 SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
+# Frame depolama üst sınırı (MB). Toplam frame boyutu bunu aşarsa en eski video
+# klasörleri otomatik silinir (volume dolmasın). Yalnız kanıt kareleri saklandığı
+# için bu sınıra ulaşmak zordur; yine de güvenlik için.
+FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 300)
 
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",

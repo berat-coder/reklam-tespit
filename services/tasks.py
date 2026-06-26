@@ -26,8 +26,31 @@ from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
     set_channel_brand_flag, recompute_video_aggregates,
+    log_event, mark_live_status,
 )
 from config import AUTO_SPONSOR_THRESHOLD
+
+
+def _vid_from_url(url):
+    """watch?v=ID / youtu.be/ID / shorts/ID → video id (hata anında atıf için)."""
+    if not url:
+        return ""
+    m = (re.search(r"[?&]v=([A-Za-z0-9_\-]{6,})", url)
+         or re.search(r"youtu\.be/([A-Za-z0-9_\-]{6,})", url)
+         or re.search(r"/(?:shorts|live|embed)/([A-Za-z0-9_\-]{6,})", url))
+    return m.group(1) if m else ""
+
+
+def _classify_error(err):
+    """Hata mesajını sınıflandır → (code, kind). kind: 'cookie'|'permanent'|'transient'."""
+    e = (err or "").lower()
+    if "please sign in" in e or "sign in to confirm" in e or "sign in" in e:
+        return "cookie_expired", "cookie"
+    if any(k in e for k in ("not available", "private", "removed", "members-only",
+                            "video unavailable", "this video is unavailable",
+                            "terminated", "deleted")):
+        return "video_unavailable", "permanent"
+    return "stream_error", "transient"
 
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
@@ -242,6 +265,8 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
                                    content_type=content_type)
     except Exception as e:
         print(f"[KANAL-TARAMA] Hata: {e}")
+        code, _ = _classify_error(str(e))
+        log_event("channel_scan", channel_url, "error", code, str(e))
         return
 
     channel_id = channel_id_from_url(channel_url)
@@ -273,6 +298,8 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
                            analyzed=True)
         added += 1
     print(f"[KANAL-TARAMA] {channel_name}: {added} yeni video sıraya alındı")
+    log_event("channel_scan", channel_name, "ok", "success",
+              f"{added} yeni video sıraya alındı ({len(res['videos'])} bulundu)")
 
 
 # ── Video analizi ─────────────────────────────────────────────────────────────
@@ -343,6 +370,22 @@ def _analyze_video_core(
         if on_status:
             on_status(msg)
 
+    vid_guess = _vid_from_url(url)
+    label_box = [url]   # title öğrenilince güncellenir (log etiketi)
+
+    def _record_fail(err, vid=None):
+        """Hatayı logla + (canlı yayınsa) live_seen durumunu güncelle."""
+        code, kind = _classify_error(str(err))
+        log_event("video", label_box[0], "error", code, str(err))
+        target = vid or vid_guess
+        if target:
+            if kind == "cookie":
+                mark_live_status(target, "pending", error=str(err))      # cookie düzelince tekrar
+            elif kind == "permanent":
+                mark_live_status(target, "permanent", error=str(err))    # bir daha deneme
+            else:
+                mark_live_status(target, "failed", error=str(err), inc_attempt=True)
+
     # 1. Meta — format yoksa bile title/description alabilmek için ignore_no_formats_error
     try:
         with YoutubeDL(get_ydl_opts({
@@ -359,16 +402,19 @@ def _analyze_video_core(
             status(f"Video erişilemiyor (özel/silinmiş/kısıtlı): {err}")
         else:
             status(f"Meta hatası: {err}")
+        _record_fail(err)
         on_set_live(status="error", message=err, progress=0)
         return
 
     if not info:
         status("Video bilgisi alınamadı")
+        _record_fail("Video bilgisi alınamadı")
         on_set_live(status="error", message="Video bilgisi alınamadı", progress=0)
         return
 
     video_id = info.get("id")
     title = info.get("title", "")
+    label_box[0] = title or url
     duration = info.get("duration", 0) or 0
     description = info.get("description", "") or ""
     thumb_url = info.get("thumbnail", "")
@@ -449,11 +495,13 @@ def _analyze_video_core(
                     break
     except Exception as e:
         status(f"Stream hatası: {e}")
+        _record_fail(e, video_id)
         on_set_live(status="error", message=str(e), progress=0)
         return
 
     if not stream_url:
         status("Stream URL bulunamadı — video özel veya kısıtlı olabilir")
+        _record_fail("Stream URL bulunamadı", video_id)
         on_set_live(status="error", message="Stream URL bulunamadı", progress=0)
         return
 
@@ -484,6 +532,7 @@ def _analyze_video_core(
         )
     except Exception as e:
         status(f"Frame çıkarma hatası: {e}")
+        _record_fail(e, video_id)
         on_set_live(status="error", message=str(e), progress=0)
         return
 
@@ -501,6 +550,7 @@ def _analyze_video_core(
     total_frames = len(frames_data)
     if total_frames == 0:
         status("Frame çıkarılamadı — video erişilemiyor olabilir")
+        _record_fail("Frame çıkarılamadı", video_id)
         on_set_live(status="error", message="Frame çıkarılamadı", progress=0)
         return
 
@@ -611,6 +661,21 @@ def _analyze_video_core(
         desc_brands=desc_brands,
         completed=True,
     )
+
+    # ── Kanıt-kare temizliği: yalnız reklam karelerini diskte tut (kalıcı, az yer) ──
+    keep = {d["frame_url"].rsplit("/", 1)[-1] for d in detections
+            if d.get("reklam_var") and d.get("frame_url")}
+    for d in detections:
+        if not d.get("reklam_var"):
+            d["frame_url"] = ""   # temiz kare diskten silinecek → kırık görsel olmasın
+    try:
+        from services.storage import keep_only_evidence_frames, prune_frames
+        from config import FRAME_STORAGE_CAP_MB
+        keep_only_evidence_frames(video_id, keep)
+        prune_frames(FRAME_STORAGE_CAP_MB)
+    except Exception as e:
+        print(f"[FRAME] temizlik atlandı: {e}")
+
     save_detections(video_id, detections)
 
     # ── Otomatik ANA SPONSOR: eşik üstü VEYA sürekli ekranda olan (köşe logosu /
@@ -627,6 +692,10 @@ def _analyze_video_core(
 
     msg = f"✓ Tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam"
     status(msg)
+    # Başarı: logla + (canlı yayınsa) durumu 'done' yap
+    log_event("video", title or url, "ok", "success",
+              f"{agg['ad_frame_count']} reklam · {analyzed} kare")
+    mark_live_status(video_id, "done")
     on_set_live(
         status="completed", progress=100,
         message=f"Tamamlandı — {agg['ad_frame_count']} reklam tespit",

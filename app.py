@@ -1,21 +1,18 @@
 import os
-import shutil
 import secrets
 from datetime import timedelta
 from flask import (
     Flask, send_from_directory, request, session, redirect, Response,
 )
-from config import BASE_DIR, DATA_DIR, FRAMES_DIR
+from config import BASE_DIR, DATA_DIR, FRAMES_DIR, FRAME_STORAGE_CAP_MB
 
-# Volume'u şişiren eski frame'leri temizle (artık efemeral diskte tutuluyor).
-# init_db'den ÖNCE: dolu disk SQLite'ı patlatmasın diye önce yer aç.
+# Frame'ler artık KALICI (volume). Açılışta toplam boyut cap'i aşılmışsa en eski
+# video klasörlerini buda (volume dolmasın) — silmek yerine sınırla.
 try:
-    _old_frames = DATA_DIR / "frames"
-    if _old_frames.exists() and _old_frames.resolve() != FRAMES_DIR.resolve():
-        shutil.rmtree(_old_frames, ignore_errors=True)
-        print(f"[BAKIM] Eski frame dizini temizlendi: {_old_frames}")
+    from services.storage import prune_frames
+    prune_frames(FRAME_STORAGE_CAP_MB)
 except Exception as e:
-    print(f"[BAKIM] Frame temizleme atlandı: {e}")
+    print(f"[BAKIM] Frame budama atlandı: {e}")
 
 from models.database import init_db, verify_user, get_user_role
 from routes.api import api_bp
