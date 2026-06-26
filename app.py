@@ -1,10 +1,22 @@
 import os
+import shutil
 import secrets
 from datetime import timedelta
 from flask import (
     Flask, send_from_directory, request, session, redirect, Response,
 )
-from config import BASE_DIR, FRAMES_DIR
+from config import BASE_DIR, DATA_DIR, FRAMES_DIR
+
+# Volume'u şişiren eski frame'leri temizle (artık efemeral diskte tutuluyor).
+# init_db'den ÖNCE: dolu disk SQLite'ı patlatmasın diye önce yer aç.
+try:
+    _old_frames = DATA_DIR / "frames"
+    if _old_frames.exists() and _old_frames.resolve() != FRAMES_DIR.resolve():
+        shutil.rmtree(_old_frames, ignore_errors=True)
+        print(f"[BAKIM] Eski frame dizini temizlendi: {_old_frames}")
+except Exception as e:
+    print(f"[BAKIM] Frame temizleme atlandı: {e}")
+
 from models.database import init_db, verify_user
 from routes.api import api_bp
 

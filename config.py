@@ -6,11 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).parent
-# Kalıcı veri dizini (Docker volume için DATA_DIR ile override edilebilir).
+# Kalıcı veri dizini (data.db, config.json) — Docker volume (DATA_DIR ile override).
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-FRAMES_DIR = DATA_DIR / "frames"
-FRAMES_DIR.mkdir(exist_ok=True)
+# Frame'ler EFEMERAL diskte tutulur (volume'u doldurmasın). Yalnız küçük data.db
+# volume'da kalır; frame'ler sadece önizleme küçük resmi, kaybolması kritik değil.
+FRAMES_DIR = Path(os.environ.get("FRAMES_DIR", BASE_DIR / "frames"))
+FRAMES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Görüntü tespit modeli. ÜCRETSIZ KATMAN günlük istek (RPD) kotaları:
 #   gemini-2.5-flash / 2.5-flash-lite  → sadece 20 RPD (günde ~2-3 video!)
