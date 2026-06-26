@@ -387,6 +387,8 @@ def _analyze_video_core(
     channel_logos = ch.get("channel_logos", [])
     main_sponsors = ch.get("main_sponsors", [])
     active_only = ch.get("sponsor_active_only", [])
+    brand_aliases = ch.get("brand_aliases", {})
+    ignored_brands = ch.get("ignored_brands", [])
 
     # ── Canlı state başlat ──
     on_clear_live()
@@ -579,8 +581,9 @@ def _analyze_video_core(
         update_channel_logos(channel_id, updated_logos)
         channel_logos = updated_logos
 
-    # ── Özet ve kayıt (ortak agregat modülü, mevcut sponsor/logo bayraklarıyla) ──
-    agg = compute_aggregates(detections, channel_logos, main_sponsors, active_only)
+    # ── Özet ve kayıt (ortak agregat modülü, kanal bayrakları + öğrenilen kurallar) ──
+    agg = compute_aggregates(detections, channel_logos, main_sponsors, active_only,
+                             brand_aliases=brand_aliases, ignored_brands=ignored_brands)
 
     upsert_video(
         video_id=video_id,

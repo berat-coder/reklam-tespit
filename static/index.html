@@ -240,6 +240,19 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   color: var(--dim); white-space: nowrap; }
 .scan-type-btn:hover { color: var(--text); }
 .scan-type-btn.active { background: var(--accent); color: #fff; }
+
+/* Öğrenilen kurallar */
+.rule-suggest { background: rgba(255,170,34,0.08); border: 1px solid var(--amber);
+  border-radius: 10px; padding: 12px; }
+.rule-row { display: flex; align-items: center; gap: 8px; font-size: 13px;
+  padding: 6px 0; flex-wrap: wrap; }
+.rule-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rule-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  background: var(--bg3); border: 1px solid var(--border2); color: var(--text);
+  padding: 4px 6px 4px 10px; border-radius: 99px; }
+.rule-chip button { background: none; border: none; color: var(--dimmer);
+  cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+.rule-chip button:hover { color: var(--red); }
 .setup-close {
   position: absolute; top: 14px; right: 14px; width: 32px; height: 32px;
   background: var(--bg3); border: 1px solid var(--border); color: var(--dim);
@@ -1465,6 +1478,9 @@ async function loadChannel(id) {
     <div class="stat-tile"><div class="stat-tile-num">${ch.channel_logos.length}</div><div class="stat-tile-lbl">Tanınan Logo</div></div>
   </div>`;
 
+  // Öğrenilen kurallar (async doldurulur)
+  html += `<div id="channelRules"></div>`;
+
   // Kanal logoları (kara liste)
   if (ch.channel_logos.length > 0) {
     html += `<div class="section">
@@ -1528,6 +1544,66 @@ async function loadChannel(id) {
   html += `</div>`;
 
   $('main').innerHTML = html;
+  renderChannelRules(id);
+}
+
+async function renderChannelRules(chId) {
+  const box = $('channelRules');
+  if (!box) return;
+  let r;
+  try { r = await (await fetch('/api/channel/' + encodeURIComponent(chId) + '/rules')).json(); }
+  catch (e) { return; }
+  const aliases = Object.entries(r.aliases || {});
+  const ignored = r.ignored || [];
+  const suggestions = r.suggestions || [];
+  if (!aliases.length && !ignored.length && !suggestions.length) { box.innerHTML = ''; return; }
+
+  let h = `<div class="section"><div class="section-head"><div class="section-title-lg">🧠 Öğrenilen Kurallar</div></div>`;
+
+  if (suggestions.length) {
+    h += `<div class="rule-suggest">
+      <div style="font-size:12px;color:var(--amber);margin-bottom:8px"><i class="ti ti-bulb"></i> Öneriler — onaylarsan bu kanalda otomatik uygulanır</div>
+      ${suggestions.map(s => `
+        <div class="rule-row">
+          <span style="flex:1">"<strong>${esc(s.marka)}</strong>"yi ${s.count} kez "reklam değil" yaptın — bu kanalda hep yok sayayım mı?</span>
+          <button class="btn sm" style="color:var(--green);border-color:var(--green)" onclick="ruleApprove('${jsq(chId)}','${jsq(s.marka)}')"><i class="ti ti-check"></i> Onayla</button>
+          <button class="btn sm" onclick="ruleReject('${jsq(chId)}','${jsq(s.marka)}')">Yoksay</button>
+        </div>`).join('')}
+    </div>`;
+  }
+
+  const chips = [];
+  aliases.forEach(([src, rule]) => chips.push(
+    `<span class="rule-chip"><i class="ti ti-arrows-exchange"></i> ${esc(src)} → <strong>${esc(rule.to)}</strong>
+      <button onclick="ruleRemove('${jsq(chId)}','alias','${jsq(src)}')">×</button></span>`));
+  ignored.forEach(m => chips.push(
+    `<span class="rule-chip"><i class="ti ti-eye-off"></i> ${esc(m)} <span style="color:var(--dimmer)">(reklam değil)</span>
+      <button onclick="ruleRemove('${jsq(chId)}','ignore','${jsq(m)}')">×</button></span>`));
+  if (chips.length) {
+    h += `<div style="margin-top:${suggestions.length?'12px':'0'}">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Aktif kurallar</div>
+      <div class="rule-chips">${chips.join('')}</div></div>`;
+  }
+  h += `</div>`;
+  box.innerHTML = h;
+}
+
+async function ruleApprove(chId, marka) {
+  await fetch(`/api/channel/${encodeURIComponent(chId)}/rules/approve`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({marka})});
+  toast(`Öğrenildi: "${marka}" artık bu kanalda reklam sayılmayacak`, 'success');
+  loadChannel(chId);
+}
+async function ruleReject(chId, marka) {
+  await fetch(`/api/channel/${encodeURIComponent(chId)}/rules/reject`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({marka})});
+  renderChannelRules(chId);
+}
+async function ruleRemove(chId, kind, key) {
+  await fetch(`/api/channel/${encodeURIComponent(chId)}/rules/remove`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({kind, key})});
+  toast('Kural kaldırıldı', 'success');
+  loadChannel(chId);
 }
 
 function renderDonut(items) {
@@ -1994,6 +2070,8 @@ async function brandEdit(payload, okMsg) {
   const d = await r.json();
   if (d.error) { toast(d.error, 'error'); return; }
   toast(okMsg, 'success');
+  if (d.learned === 'alias') toast('🧠 Öğrenildi: bu kanalda bundan sonra otomatik uygulanacak', 'info', 5000);
+  else if (d.learned === 'suggestion') toast('🧠 Öneri eklendi — Kanal sayfasındaki "Öğrenilen Kurallar"dan onayla', 'info', 6000);
   loadVideo(state.videoId);
 }
 

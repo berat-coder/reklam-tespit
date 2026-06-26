@@ -46,7 +46,18 @@ def _norm_key(s):
 _PASSIVE_TURS = {"Köşe Banner", "Arka Plan", "Reklam"}
 
 
-def compute_aggregates(detections, channel_logos, main_sponsors=None, active_only=None):
+def _apply_alias(name, alias_map):
+    """Öğrenilen yeniden adlandırma: kaynak adı kanonik ada çevirir."""
+    if not alias_map:
+        return name
+    rule = alias_map.get(_norm_key(name))
+    if rule and rule.get("to"):
+        return rule["to"]
+    return name
+
+
+def compute_aggregates(detections, channel_logos, main_sponsors=None, active_only=None,
+                       brand_aliases=None, ignored_brands=None):
     """
     detections: get_detections() biçiminde dict listesi.
     channel_logos: kanalın kendi logoları (reklam sayılmayacak).
@@ -57,9 +68,14 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             persistent_overlays, brand_report}
     Deterministik ve idempotent — aynı girdi hep aynı çıktı.
     """
+    alias_map = brand_aliases or {}
+    def al(n):
+        return _apply_alias(n, alias_map)
     logo_keys = {_norm_key(l) for l in (channel_logos or []) if l}
     sponsor_keys = {_norm_key(s) for s in (main_sponsors or []) if s}
     active_only_keys = {_norm_key(s) for s in (active_only or []) if s}
+    ignored_keys = {_norm_key(i) for i in (ignored_brands or []) if i}
+    excluded_keys = logo_keys | ignored_keys  # ad sayımından düşenler
     total = len(detections)
 
     type_counts = {}
@@ -82,7 +98,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         frame_brands = []   # görüntü adıyla, casefold ile tekilleştirilmiş
         seen_b = set()
         for name in list(markalar) + [t.get("marka", "") for t in tespitler]:
-            nm = _norm(name)
+            nm = _norm(al(name))   # öğrenilen alias uygulanır (varyantlar birleşir)
             if not nm:
                 continue
             k = _norm_key(nm)
@@ -100,10 +116,10 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         if not d.get("reklam_var"):
             continue
 
-        # Kanal logosu olmayan markalar = gerçek reklam markaları (#1)
-        ad_brands = [nm for nm in frame_brands if _norm_key(nm) not in logo_keys]
+        # Kanal logosu / yok-sayılan marka olmayan markalar = gerçek reklam markaları (#1)
+        ad_brands = [nm for nm in frame_brands if _norm_key(nm) not in excluded_keys]
         ad_tespitler = [t for t in tespitler
-                        if _norm_key(t.get("marka", "")) not in logo_keys]
+                        if _norm_key(al(t.get("marka", ""))) not in excluded_keys]
         rep_turs = [_canonical_tur(t.get("tur", "")) for t in ad_tespitler]
         rep_tur = rep_turs[0] if rep_turs else "Reklam"
 
@@ -111,7 +127,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         frame_kept = {}   # marka_key -> {"nm":.., "pairs":[(tur,konum)]}
         for nm in ad_brands:
             bk = _norm_key(nm)
-            matched = [t for t in ad_tespitler if _norm_key(t.get("marka", "")) == bk]
+            matched = [t for t in ad_tespitler if _norm_key(al(t.get("marka", ""))) == bk]
             if matched:
                 pairs = [(_canonical_tur(t.get("tur", "")), _norm(t.get("konum", ""))) for t in matched]
             else:

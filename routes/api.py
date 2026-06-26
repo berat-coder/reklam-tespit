@@ -13,6 +13,8 @@ from models.database import (
     update_detection, recompute_video_aggregates, set_channel_brand_flag,
     edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
     create_user, list_users, delete_user,
+    add_brand_alias, bump_ignore_and_maybe_suggest, approve_suggestion,
+    reject_suggestion, remove_rule, get_channel_rules,
 )
 from services.aggregates import compute_aggregates
 
@@ -273,7 +275,9 @@ def export_video_csv(video_id):
         return jsonify({"error": "Video bulunamadı"}), 404
     ch = get_channel(v["channel_id"]) or {}
     agg = compute_aggregates(get_detections(video_id), ch.get("channel_logos", []),
-                             ch.get("main_sponsors", []), ch.get("sponsor_active_only", []))
+                             ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
+                             brand_aliases=ch.get("brand_aliases", {}),
+                             ignored_brands=ch.get("ignored_brands", []))
     rows = [[
         b["marka"], b["appearances"], b["frame_count"],
         " / ".join(f"{t}:{n}" for t, n in (b.get("tur_counts") or {}).items()),
@@ -402,10 +406,12 @@ def video_detail(video_id):
         return jsonify({"error": "Video bulunamadı"}), 404
     ch = get_channel(v["channel_id"]) or {}
     detections = get_detections(video_id)
-    # brand_report + güncel bayraklar → okurken hesaplanır (canlı, kayıttan bağımsız)
+    # brand_report + güncel bayraklar + öğrenilen kurallar → okurken hesaplanır
     agg = compute_aggregates(detections, ch.get("channel_logos", []),
                              ch.get("main_sponsors", []),
-                             ch.get("sponsor_active_only", []))
+                             ch.get("sponsor_active_only", []),
+                             brand_aliases=ch.get("brand_aliases", {}),
+                             ignored_brands=ch.get("ignored_brands", []))
     return jsonify({
         "video": {
             **v,
@@ -472,14 +478,64 @@ def brand_edit(video_id):
     action = data.get("action")
     if action not in ("rename", "remove"):
         return jsonify({"error": "Geçersiz action"}), 400
-    if not get_video(video_id):
+    v = get_video(video_id)
+    if not v:
         return jsonify({"error": "Video bulunamadı"}), 404
     try:
         edit_brand_global(video_id, action, data.get("marka"), data.get("new_marka"))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+
+    # ── Kanal bazlı öğrenme ──
+    learned = None
+    cid = v["channel_id"]
+    if action == "rename":
+        add_brand_alias(cid, data.get("marka"), data.get("new_marka"))
+        learned = "alias"  # hemen aktif
+    elif action == "remove":
+        bump_ignore_and_maybe_suggest(cid, data.get("marka"))
+        rules = get_channel_rules(cid)
+        if any(s.get("marka", "").casefold() == (data.get("marka") or "").strip().casefold()
+               for s in rules.get("suggestions", [])):
+            learned = "suggestion"
+
     agg = recompute_video_aggregates(video_id)
-    return jsonify({"ok": True, **(agg or {})})
+    return jsonify({"ok": True, "learned": learned, **(agg or {})})
+
+
+# ── Öğrenilen kurallar (kanal bazlı) ───────────────────────────────────────────
+
+def _recompute_channel(ch_id):
+    for v in get_channel_videos(ch_id):
+        recompute_video_aggregates(v["id"])
+
+
+@api_bp.route("/api/channel/<path:ch_id>/rules")
+def channel_rules(ch_id):
+    return jsonify(get_channel_rules(ch_id))
+
+
+@api_bp.route("/api/channel/<path:ch_id>/rules/approve", methods=["POST"])
+def channel_rule_approve(ch_id):
+    marka = (request.get_json() or {}).get("marka", "")
+    approve_suggestion(ch_id, marka)
+    _recompute_channel(ch_id)
+    return jsonify({"ok": True})
+
+
+@api_bp.route("/api/channel/<path:ch_id>/rules/reject", methods=["POST"])
+def channel_rule_reject(ch_id):
+    marka = (request.get_json() or {}).get("marka", "")
+    reject_suggestion(ch_id, marka)
+    return jsonify({"ok": True})
+
+
+@api_bp.route("/api/channel/<path:ch_id>/rules/remove", methods=["POST"])
+def channel_rule_remove(ch_id):
+    data = request.get_json() or {}
+    remove_rule(ch_id, data.get("kind"), data.get("key"))
+    _recompute_channel(ch_id)
+    return jsonify({"ok": True})
 
 
 # ── Tarama / Analiz ───────────────────────────────────────────────────────────

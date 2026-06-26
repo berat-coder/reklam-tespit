@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS channels (
     channel_logos TEXT NOT NULL DEFAULT '[]',
     main_sponsors TEXT NOT NULL DEFAULT '[]',
     sponsor_active_only TEXT NOT NULL DEFAULT '[]',
+    brand_aliases TEXT NOT NULL DEFAULT '{}',
+    ignored_brands TEXT NOT NULL DEFAULT '[]',
+    rule_state TEXT NOT NULL DEFAULT '{}',
     avatar_url   TEXT NOT NULL DEFAULT '',
     last_scanned TEXT
 );
@@ -124,6 +127,9 @@ def init_db():
             "ALTER TABLE channels ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE channels ADD COLUMN main_sponsors TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE channels ADD COLUMN sponsor_active_only TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE channels ADD COLUMN brand_aliases TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE channels ADD COLUMN ignored_brands TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE channels ADD COLUMN rule_state TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE videos ADD COLUMN persistent_overlays TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE detections ADD COLUMN manual_clean INTEGER NOT NULL DEFAULT 0",
         ):
@@ -194,6 +200,103 @@ def set_channel_brand_flag(ch_id, marka, flag, value):
             (json.dumps(new_list, ensure_ascii=False), ch_id),
         )
     return new_list
+
+
+# ── Kanal bazlı öğrenilen kurallar (alias / yok say / öneri) ───────────────────
+
+def _ckey(s):
+    return (s or "").strip().casefold()
+
+
+def add_brand_alias(ch_id, src, dst):
+    """Yeniden adlandırma kuralı: src markası → dst (hemen aktif)."""
+    src, dst = (src or "").strip(), (dst or "").strip()
+    if not src or not dst or _ckey(src) == _ckey(dst):
+        return
+    ch = get_channel(ch_id) or {}
+    aliases = ch.get("brand_aliases", {})
+    aliases[_ckey(src)] = {"to": dst}
+    with get_db() as conn:
+        conn.execute("UPDATE channels SET brand_aliases = ? WHERE id = ?",
+                     (json.dumps(aliases, ensure_ascii=False), ch_id))
+
+
+def bump_ignore_and_maybe_suggest(ch_id, marka, threshold=2):
+    """'Reklam değil' sayacını artır; eşik dolunca öneri oluştur (zaten aktif/önerili değilse)."""
+    key = _ckey(marka)
+    if not key:
+        return
+    ch = get_channel(ch_id) or {}
+    if key in {_ckey(x) for x in ch.get("ignored_brands", [])}:
+        return  # zaten aktif
+    rs = ch.get("rule_state", {}) or {}
+    counts = rs.get("ignore_counts", {})
+    counts[key] = counts.get(key, 0) + 1
+    sugg = rs.get("suggestions", [])
+    if counts[key] >= threshold and not any(_ckey(s.get("marka")) == key for s in sugg):
+        sugg.append({"type": "ignore", "marka": (marka or "").strip(), "count": counts[key]})
+    rs["ignore_counts"] = counts
+    rs["suggestions"] = sugg
+    with get_db() as conn:
+        conn.execute("UPDATE channels SET rule_state = ? WHERE id = ?",
+                     (json.dumps(rs, ensure_ascii=False), ch_id))
+
+
+def approve_suggestion(ch_id, marka):
+    """Öneriyi aktif 'yok say' kuralına çevirir."""
+    key = _ckey(marka)
+    ch = get_channel(ch_id) or {}
+    ignored = ch.get("ignored_brands", [])
+    if key not in {_ckey(x) for x in ignored}:
+        ignored.append((marka or "").strip())
+    rs = ch.get("rule_state", {}) or {}
+    rs["suggestions"] = [s for s in rs.get("suggestions", []) if _ckey(s.get("marka")) != key]
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE channels SET ignored_brands = ?, rule_state = ? WHERE id = ?",
+            (json.dumps(ignored, ensure_ascii=False), json.dumps(rs, ensure_ascii=False), ch_id))
+
+
+def reject_suggestion(ch_id, marka):
+    key = _ckey(marka)
+    ch = get_channel(ch_id) or {}
+    rs = ch.get("rule_state", {}) or {}
+    rs["suggestions"] = [s for s in rs.get("suggestions", []) if _ckey(s.get("marka")) != key]
+    # tekrar önermesin diye sayacı sıfırla
+    counts = rs.get("ignore_counts", {})
+    counts.pop(key, None)
+    rs["ignore_counts"] = counts
+    with get_db() as conn:
+        conn.execute("UPDATE channels SET rule_state = ? WHERE id = ?",
+                     (json.dumps(rs, ensure_ascii=False), ch_id))
+
+
+def remove_rule(ch_id, kind, key):
+    """Aktif kuralı sil. kind: 'alias' | 'ignore'."""
+    ch = get_channel(ch_id) or {}
+    if kind == "alias":
+        aliases = ch.get("brand_aliases", {})
+        aliases.pop(_ckey(key), None)
+        with get_db() as conn:
+            conn.execute("UPDATE channels SET brand_aliases = ? WHERE id = ?",
+                         (json.dumps(aliases, ensure_ascii=False), ch_id))
+    elif kind == "ignore":
+        ignored = [x for x in ch.get("ignored_brands", []) if _ckey(x) != _ckey(key)]
+        with get_db() as conn:
+            conn.execute("UPDATE channels SET ignored_brands = ? WHERE id = ?",
+                         (json.dumps(ignored, ensure_ascii=False), ch_id))
+
+
+def get_channel_rules(ch_id):
+    ch = get_channel(ch_id) or {}
+    return {
+        "aliases": ch.get("brand_aliases", {}),
+        "ignored": ch.get("ignored_brands", []),
+        "suggestions": (ch.get("rule_state", {}) or {}).get("suggestions", []),
+        "channel_logos": ch.get("channel_logos", []),
+        "main_sponsors": ch.get("main_sponsors", []),
+        "sponsor_active_only": ch.get("sponsor_active_only", []),
+    }
 
 
 def edit_brand_global(video_id, action, marka, new_marka=None):
@@ -422,7 +525,9 @@ def recompute_video_aggregates(video_id):
     detections = get_detections(video_id)
     agg = compute_aggregates(detections, ch.get("channel_logos", []),
                              ch.get("main_sponsors", []),
-                             ch.get("sponsor_active_only", []))
+                             ch.get("sponsor_active_only", []),
+                             brand_aliases=ch.get("brand_aliases", {}),
+                             ignored_brands=ch.get("ignored_brands", []))
     upsert_video(
         video_id=video_id,
         channel_id=v["channel_id"],
@@ -591,6 +696,9 @@ def _ch(row):
         "channel_logos": json.loads(d.get("channel_logos") or "[]"),
         "main_sponsors": json.loads(_col(d, "main_sponsors", None) or "[]"),
         "sponsor_active_only": json.loads(_col(d, "sponsor_active_only", None) or "[]"),
+        "brand_aliases": json.loads(_col(d, "brand_aliases", None) or "{}"),
+        "ignored_brands": json.loads(_col(d, "ignored_brands", None) or "[]"),
+        "rule_state": json.loads(_col(d, "rule_state", None) or "{}"),
         "avatar_url": d.get("avatar_url", ""),
         "last_scanned": d.get("last_scanned"),
     }
