@@ -184,6 +184,33 @@ def _since_from_days():
     return (datetime.utcnow() - timedelta(days=days)).isoformat()
 
 
+@api_bp.route("/api/maintenance/disk")
+def maintenance_disk():
+    """Disk/volume durumu teşhisi."""
+    import shutil as _sh
+    from config import DATA_DIR, FRAMES_DIR
+    def _dirsize(p):
+        t = 0
+        try:
+            for root, _, files in os.walk(p):
+                for f in files:
+                    try: t += os.path.getsize(os.path.join(root, f))
+                    except OSError: pass
+        except Exception: pass
+        return t
+    du = _sh.disk_usage(str(DATA_DIR))
+    old_frames = DATA_DIR / "frames"
+    return jsonify({
+        "data_dir": str(DATA_DIR), "frames_dir": str(FRAMES_DIR),
+        "disk_total_mb": round(du.total / 1e6, 1),
+        "disk_used_mb": round(du.used / 1e6, 1),
+        "disk_free_mb": round(du.free / 1e6, 1),
+        "old_volume_frames_exists": old_frames.exists(),
+        "old_volume_frames_mb": round(_dirsize(old_frames) / 1e6, 1),
+        "ephemeral_frames_mb": round(_dirsize(FRAMES_DIR) / 1e6, 1),
+    })
+
+
 @api_bp.route("/api/maintenance/auto-sponsors", methods=["POST"])
 def maintenance_auto_sponsors():
     """Mevcut tüm videolarda eşik üstü markaları geriye dönük ana sponsor yapar
