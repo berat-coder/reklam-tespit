@@ -742,6 +742,44 @@ def get_dashboard_data(since=None):
     }
 
 
+def _brand_summary(videos):
+    """Verilen videolardan top marka + sayaçlar (kanal logosu/sponsor zaten agregada)."""
+    brands = {}
+    ad_frames = 0
+    channels = set()
+    for v in videos:
+        ad_frames += v.get("ad_frame_count", 0)
+        channels.add(v["channel_id"])
+        for m, c in (v.get("brand_counts") or {}).items():
+            brands[m] = brands.get(m, 0) + c
+    top = sorted(({"marka": m, "count": c} for m, c in brands.items()),
+                 key=lambda x: -x["count"])
+    return {
+        "video_count": len(videos),
+        "ad_frames": ad_frames,
+        "channel_count": len(channels),
+        "top_brands": top,
+    }
+
+
+def get_daily_report(day=None):
+    """Ana sayfa günlük raporu: bugünün ve son 7 günün öne çıkan markaları + aktivite."""
+    today = day or datetime.utcnow().strftime("%Y-%m-%d")
+    week_cut = (datetime.utcnow() - __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
+    videos = get_all_videos(completed_only=True)
+    today_v = [v for v in videos if (v.get("analyzed_at") or "")[:10] == today]
+    week_v = [v for v in videos if (v.get("analyzed_at") or "")[:10] >= week_cut]
+    last_day = max(((v.get("analyzed_at") or "")[:10] for v in videos), default="")
+    return {
+        "date": today,
+        "today": _brand_summary(today_v),
+        "week": _brand_summary(week_v),
+        "last_active_day": last_day,
+        "total_channels": len({v["channel_id"] for v in videos}),
+        "total_videos": len(videos),
+    }
+
+
 def get_brand_appearances(marka):
     """Bir markanın tüm kanal/videolardaki görünümleri + haftalık trend."""
     key = (marka or "").strip().casefold()

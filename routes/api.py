@@ -12,6 +12,7 @@ from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
     update_detection, recompute_video_aggregates, set_channel_brand_flag,
     edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
+    get_daily_report,
     create_user, list_users, delete_user,
     add_brand_alias, bump_ignore_and_maybe_suggest, approve_suggestion,
     reject_suggestion, remove_rule, get_channel_rules,
@@ -240,6 +241,11 @@ def maintenance_auto_sponsors():
         recompute_video_aggregates(v["id"])
     return jsonify({"ok": True, "flagged": flagged,
                     "threshold": AUTO_SPONSOR_THRESHOLD})
+
+
+@api_bp.route("/api/daily-report")
+def daily_report():
+    return jsonify(get_daily_report())
 
 
 @api_bp.route("/api/dashboard")

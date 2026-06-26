@@ -42,19 +42,22 @@ _LOGIN_HTML = """<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Giriş — Reklam Tespit</title>
 <style>
-*{box-sizing:border-box} body{margin:0;background:#0a0a0f;color:#f0f0f6;
+*{box-sizing:border-box} body{margin:0;background:#f6f7f9;color:#15171c;
  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
  display:flex;align-items:center;justify-content:center;min-height:100vh}
-.card{background:#14141d;border:1px solid #2e2e42;border-radius:14px;padding:32px;width:320px}
-.logo{width:40px;height:40px;background:#ff4444;border-radius:9px;display:flex;
+.card{background:#fff;border:1px solid #e7e9ed;border-radius:16px;padding:32px;width:320px;
+ box-shadow:0 4px 12px rgba(16,24,40,.08),0 2px 4px rgba(16,24,40,.05)}
+.logo{width:40px;height:40px;background:#15171c;color:#fff;border-radius:10px;display:flex;
  align-items:center;justify-content:center;font-size:18px;margin-bottom:16px}
-h1{font-size:18px;margin:0 0 4px} p{color:#8a8aa0;font-size:13px;margin:0 0 20px}
-label{display:block;font-size:12px;color:#8a8aa0;margin:12px 0 4px}
-input{width:100%;background:#0a0a0f;border:1px solid #2e2e42;color:#f0f0f6;
+h1{font-size:18px;margin:0 0 4px} p{color:#6b7280;font-size:13px;margin:0 0 20px}
+label{display:block;font-size:12px;color:#6b7280;margin:12px 0 4px}
+input{width:100%;background:#fff;border:1px solid #d8dce2;color:#15171c;
  padding:10px 12px;border-radius:8px;font-size:14px}
-button{width:100%;margin-top:18px;background:#ff4444;border:none;color:#fff;
+input:focus{outline:none;border-color:#15171c}
+button{width:100%;margin-top:18px;background:#15171c;border:none;color:#fff;
  padding:11px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer}
-.err{color:#ff4466;font-size:12px;margin-top:12px;min-height:16px}
+button:hover{background:#000}
+.err{color:#e5484d;font-size:12px;margin-top:12px;min-height:16px}
 </style></head><body>
 <form class="card" method="POST" action="/login">
   <div class="logo">▶</div>

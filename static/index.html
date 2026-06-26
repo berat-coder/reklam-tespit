@@ -9,22 +9,25 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #0a0a0f;
-  --bg2: #14141d;
-  --bg3: #1d1d2a;
-  --bg4: #262636;
-  --border: #2e2e42;
-  --border2: #3a3a52;
-  --text: #f0f0f6;
-  --dim: #8a8aa0;
-  --dimmer: #5a5a70;
-  --accent: #ff4444;
-  --accent2: #ff6b35;
-  --green: #44cc88;
-  --amber: #ffaa22;
-  --red: #ff4466;
-  --blue: #5a8cff;
-  --purple: #8b5cf6;
+  --bg: #f6f7f9;        /* sayfa zemini (açık gri) */
+  --bg2: #ffffff;       /* kenar çubuğu / yüzey */
+  --bg3: #eef0f3;       /* hafif gri dolgu (çip/hover/track/placeholder) */
+  --bg4: #e3e6eb;       /* daha koyu dolgu / hover */
+  --surface: #ffffff;   /* kart yüzeyi (beyaz) */
+  --border: #e7e9ed;
+  --border2: #d8dce2;
+  --text: #15171c;      /* neredeyse siyah */
+  --dim: #6b7280;       /* ikincil metin */
+  --dimmer: #9aa1ab;    /* soluk */
+  --accent: #15171c;    /* birincil = nötr siyah (butonlar/aktif) */
+  --accent2: #000000;   /* primary hover */
+  --green: #1a9c63;     /* durum: temiz */
+  --amber: #c77700;     /* durum: orta */
+  --red: #e5484d;       /* durum: reklam */
+  --blue: #2f6feb;
+  --purple: #7c5cff;
+  --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.07);
+  --shadow-lg: 0 4px 12px rgba(16,24,40,.08), 0 2px 4px rgba(16,24,40,.05);
 }
 body {
   background: var(--bg); color: var(--text); font-size: 14px;
@@ -125,10 +128,10 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   gap: 12px;
 }
 .channel-card {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px; cursor: pointer; transition: all 0.15s;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; cursor: pointer; transition: all 0.15s; box-shadow: var(--shadow);
 }
-.channel-card:hover { border-color: var(--border2); transform: translateY(-1px); }
+.channel-card:hover { border-color: var(--border2); transform: translateY(-1px); box-shadow: var(--shadow-lg); }
 .cc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .cc-avatar {
   width: 36px; height: 36px; border-radius: 50%; background: var(--bg4);
@@ -151,7 +154,43 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   background: var(--bg3); font-size: 10px; padding: 2px 7px; border-radius: 10px;
   color: var(--dim); border: 1px solid var(--border);
 }
-.brand-pill.hot { color: var(--accent); border-color: var(--accent); }
+.brand-pill.hot { color: var(--red); border-color: var(--red); background: rgba(229,72,77,0.07); }
+
+/* Hızlı analiz (ana sayfa başlığı) */
+.quick-analyze { display: flex; gap: 8px; align-items: center; }
+.quick-analyze input {
+  width: 320px; max-width: 46vw; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 14px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow);
+}
+.quick-analyze input:focus { outline: none; border-color: var(--accent); }
+
+/* Günlük rapor kahramanı */
+.report-hero { border: 1px solid var(--border); }
+.report-meta { font-size: 12px; color: var(--dim); }
+.report-brands { display: flex; flex-direction: column; }
+.report-brand {
+  display: flex; align-items: center; gap: 14px; padding: 11px 6px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.report-brand:last-child { border-bottom: none; }
+.report-brand:hover { background: var(--bg3); border-radius: 8px; }
+.rb-rank { width: 22px; height: 22px; border-radius: 7px; background: var(--bg4); color: var(--dim);
+  font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.report-brand:nth-child(1) .rb-rank { background: var(--accent); color: #fff; }
+.rb-name { width: 160px; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.rb-bar { flex: 1; height: 8px; background: var(--bg4); border-radius: 99px; overflow: hidden; }
+.rb-fill { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.rb-count { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+
+/* Kanal listesi (sade) */
+.ch-list { display: flex; flex-direction: column; }
+.ch-row { display: flex; align-items: center; gap: 12px; padding: 12px 6px; cursor: pointer;
+  border-bottom: 1px solid var(--border); }
+.ch-row:last-child { border-bottom: none; }
+.ch-row:hover { background: var(--bg3); border-radius: 8px; }
+.ch-row-info { flex: 1; min-width: 0; }
+.ch-row-ads { font-size: 18px; font-weight: 700; color: var(--red); display: flex; flex-direction: column; align-items: flex-end; line-height: 1; }
+.ch-row-ads span { font-size: 9px; color: var(--dim); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
 
 /* Tools bar */
 .tools-bar {
@@ -165,23 +204,23 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   gap: 10px; margin-bottom: 22px;
 }
 .stat-tile {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
-  padding: 14px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px; box-shadow: var(--shadow);
 }
-.stat-tile-num { font-size: 22px; font-weight: 600; line-height: 1.1; }
+.stat-tile-num { font-size: 24px; font-weight: 650; line-height: 1.1; letter-spacing: -0.02em; }
 .stat-tile-lbl {
   font-size: 10px; color: var(--dim); text-transform: uppercase;
-  letter-spacing: 0.05em; margin-top: 5px;
+  letter-spacing: 0.05em; margin-top: 6px;
 }
-.stat-tile.red .stat-tile-num { color: var(--accent); }
+.stat-tile.red .stat-tile-num { color: var(--red); }
 .stat-tile.amber .stat-tile-num { color: var(--amber); }
 .stat-tile.green .stat-tile-num { color: var(--green); }
 .stat-tile.blue .stat-tile-num { color: var(--blue); }
 
 /* Section */
 .section {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
-  padding: 18px 20px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px 22px; margin-bottom: 18px; box-shadow: var(--shadow);
 }
 .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .section-title-lg { font-size: 15px; font-weight: 500; }
@@ -201,12 +240,12 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 /* Video list */
 .video-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .video-card {
-  background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
-  overflow: hidden; cursor: pointer; transition: all 0.15s;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden; cursor: pointer; transition: all 0.15s; box-shadow: var(--shadow);
 }
-.video-card:hover { border-color: var(--border2); }
+.video-card:hover { border-color: var(--border2); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
 .video-thumb {
-  width: 100%; aspect-ratio: 16/9; background: var(--bg);
+  width: 100%; aspect-ratio: 16/9; background: var(--bg4);
   object-fit: cover; display: block;
 }
 .video-body { padding: 10px 12px; }
@@ -220,19 +259,19 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   font-size: 11px; color: var(--dim);
 }
 .video-ad-badge {
-  background: rgba(255,68,68,0.15); color: var(--accent);
-  padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 500;
+  background: rgba(229,72,77,0.12); color: var(--red);
+  padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 600;
 }
-.video-ad-badge.zero { background: rgba(68,204,136,0.15); color: var(--green); }
+.video-ad-badge.zero { background: rgba(26,156,99,0.12); color: var(--green); }
 
 /* Setup overlay */
 .setup-overlay {
-  position: fixed; inset: 0; background: rgba(10,10,15,0.92);
+  position: fixed; inset: 0; background: rgba(20,23,28,0.45); backdrop-filter: blur(2px);
   display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px;
 }
 .setup-card {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
-  max-width: 460px; width: 100%; padding: 28px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  max-width: 460px; width: 100%; padding: 28px; box-shadow: var(--shadow-lg);
 }
 .scan-type { display: inline-flex; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 8px; padding: 2px; gap: 2px; }
@@ -299,13 +338,13 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px;
 }
 .det-card {
-  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
-  overflow: hidden; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; cursor: pointer; box-shadow: var(--shadow);
 }
-.det-card:hover { border-color: var(--border2); }
-.det-card.h { border-left: 3px solid var(--accent); }
+.det-card:hover { border-color: var(--border2); box-shadow: var(--shadow-lg); }
+.det-card.h { border-left: 3px solid var(--red); }
 .det-card.m { border-left: 3px solid var(--amber); }
-.det-card.c { opacity: 0.5; border-left: 3px solid var(--green); }
+.det-card.c { opacity: 0.6; border-left: 3px solid var(--green); }
 .det-thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
 .det-body { padding: 8px 10px; }
 .det-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
@@ -313,9 +352,9 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .det-pill {
   font-size: 9px; padding: 1px 6px; border-radius: 8px; font-weight: 500;
 }
-.det-pill.h { background: rgba(255,68,68,0.15); color: var(--accent); }
-.det-pill.m { background: rgba(255,170,34,0.15); color: var(--amber); }
-.det-pill.c { background: rgba(68,204,136,0.15); color: var(--green); }
+.det-pill.h { background: rgba(229,72,77,0.12); color: var(--red); }
+.det-pill.m { background: rgba(199,119,0,0.12); color: var(--amber); }
+.det-pill.c { background: rgba(26,156,99,0.12); color: var(--green); }
 .det-sum { font-size: 10px; color: var(--dim); display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 4px; }
 
@@ -324,18 +363,19 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   background: var(--bg3); border: 1px solid var(--border); color: var(--dim);
   padding: 5px 11px; border-radius: 14px; font-size: 11px; cursor: pointer;
 }
-.filter-btn:hover { color: var(--text); }
-.filter-btn.active { background: var(--bg4); color: var(--text); }
+.filter-btn:hover { color: var(--text); border-color: var(--border2); }
+.filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Modal */
 .modal {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none;
+  position: fixed; inset: 0; background: rgba(20,23,28,0.45); backdrop-filter: blur(2px); display: none;
   align-items: center; justify-content: center; z-index: 100; padding: 20px;
 }
 .modal.on { display: flex; }
 .modal-content {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
-  max-width: 760px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 22px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  max-width: 760px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 24px;
+  box-shadow: var(--shadow-lg);
 }
 .modal-close { float: right; background: none; border: none; color: var(--dim);
   font-size: 20px; cursor: pointer; line-height: 1; }
@@ -427,7 +467,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 }
 
 /* Marka raporu — gruplu kartlar */
-.brand-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.brand-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; overflow: hidden; box-shadow: var(--shadow); }
 .brand-card-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; }
 .brand-card-head:hover { background: var(--bg4); }
 .brand-caret { font-size: 16px; color: var(--dim); flex-shrink: 0; }
@@ -451,7 +491,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
 }
 .brand-card-span { font-size: 11px; color: var(--dim); font-family: monospace; white-space: nowrap; flex-shrink: 0; }
-.brand-frames { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg2); }
+.brand-frames { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg); }
 .bframe { position: relative; width: 130px; cursor: pointer; border-radius: 6px; overflow: hidden; }
 .bframe img { width: 100%; height: 74px; object-fit: cover; display: block; background: var(--bg3); }
 .bframe:hover { outline: 2px solid var(--accent); }
@@ -517,10 +557,10 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
   display: flex; flex-direction: column; gap: 8px; max-width: 360px;
 }
 .toast {
-  background: var(--bg3); border: 1px solid var(--border2);
+  background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--blue); color: var(--text);
-  padding: 12px 16px; border-radius: 8px; font-size: 13px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  padding: 12px 16px; border-radius: 10px; font-size: 13px;
+  box-shadow: var(--shadow-lg);
   animation: toast-in 0.2s ease; display: flex; align-items: center; gap: 8px;
 }
 .toast.error { border-left-color: var(--red); }
@@ -828,88 +868,94 @@ function goHome() {
 }
 
 async function loadHome() {
-  const r = await fetch('/api/channels');
-  const d = await r.json();
+  const [rep, chRes] = await Promise.all([
+    fetch('/api/daily-report').then(r => r.json()).catch(() => ({})),
+    fetch('/api/channels').then(r => r.json()).catch(() => ({channels: []})),
+  ]);
+  const channels = chRes.channels || [];
+  const today = rep.today || {video_count: 0, ad_frames: 0, top_brands: []};
+  const week = rep.week || {video_count: 0, ad_frames: 0, top_brands: []};
+  const dateStr = new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'});
 
+  // ── Başlık + hızlı analiz ──
   let html = `
     <div class="page-header">
       <div>
-        <h1>Kanal Takip Paneli</h1>
-        <div class="subtitle">${d.channels.length} kanal · Sponsor & marka tespit analizi</div>
+        <h1>Günlük Rapor</h1>
+        <div class="subtitle">${dateStr}</div>
       </div>
-    </div>
-
-    <div class="tools-bar">
-      <button class="btn primary" onclick="scanAll(24)">
-        <i class="ti ti-player-play"></i> Son 24 Saati Tara
-      </button>
-      <button class="btn" onclick="scanAll(72)">Son 3 Gün</button>
-      <button class="btn" onclick="scanAll(168)">Son 1 Hafta</button>
-      ${scanTypeSelector()}
-      <div class="spacer"></div>
-      <button class="btn" onclick="addChannelPrompt()">
-        <i class="ti ti-plus"></i> Kanal Ekle
-      </button>
-    </div>
-
-    <div class="section" style="margin-bottom:20px">
-      <div class="section-head"><div class="section-title-lg">Manuel Video Analizi</div></div>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="manualUrlInput" placeholder="https://www.youtube.com/watch?v=..."
-          style="flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);
-          padding:10px 14px;border-radius:8px;font-size:13px;font-family:monospace"
+      <div class="quick-analyze">
+        <input type="text" id="manualUrlInput" placeholder="YouTube linki yapıştır → analiz et"
           onkeypress="if(event.key==='Enter') analyzeManualUrl()">
-        <button class="btn primary" onclick="analyzeManualUrl()">▶ Analiz Et</button>
+        <button class="btn primary" onclick="analyzeManualUrl()"><i class="ti ti-player-play"></i> Analiz Et</button>
       </div>
-    </div>
-  `;
+    </div>`;
 
-  // Aggregate stats
-  const totalVids = d.channels.reduce((s,c)=>s+c.video_count,0);
-  const totalAds = d.channels.reduce((s,c)=>s+c.total_ads,0);
-  const activeChannels = d.channels.filter(c=>c.video_count>0).length;
-
-  html += `<div class="stat-tiles">
-    <div class="stat-tile"><div class="stat-tile-num">${d.channels.length}</div><div class="stat-tile-lbl">Takipteki Kanal</div></div>
-    <div class="stat-tile blue"><div class="stat-tile-num">${activeChannels}</div><div class="stat-tile-lbl">Aktif</div></div>
-    <div class="stat-tile"><div class="stat-tile-num">${totalVids}</div><div class="stat-tile-lbl">Analiz Edilen Video</div></div>
-    <div class="stat-tile red"><div class="stat-tile-num">${totalAds}</div><div class="stat-tile-lbl">Toplam Reklam Frame</div></div>
-  </div>`;
-
-  if (d.channels.length === 0) {
-    html += `<div class="empty-card">
-      <i class="ti ti-broadcast" style="font-size:36px;display:block;margin-bottom:8px;opacity:0.3"></i>
-      Henüz kanal yok. "Kanal Ekle" ile başla.
+  // ── Günlük rapor: bugün öne çıkan markalar ──
+  const useToday = today.video_count > 0;
+  const src = useToday ? today : week;
+  const label = useToday ? 'Bugün' : 'Son 7 gün';
+  const brands = (src.top_brands || []).slice(0, 8);
+  html += `<div class="section report-hero">
+    <div class="section-head">
+      <div class="section-title-lg">${useToday ? '🔥 Bugün Öne Çıkan Markalar' : '🔥 Son 7 Günün Öne Çıkan Markaları'}</div>
+      <div class="report-meta">${src.video_count} video · ${src.ad_frames} reklam</div>
+    </div>`;
+  if (!brands.length) {
+    html += `<div class="empty-card" style="border:none;background:transparent">
+      ${useToday ? 'Bugün henüz analiz yapılmadı.' : 'Henüz veri yok.'} Bir YouTube linki yapıştırıp analiz et veya bir kanal tara.
     </div>`;
   } else {
-    html += `<div class="channel-grid">`;
-    for (const ch of d.channels) {
+    const max = Math.max(...brands.map(b => b.count));
+    html += `<div class="report-brands">` + brands.map((b, i) => `
+      <div class="report-brand" onclick="openBrand('${jsq(b.marka)}')">
+        <span class="rb-rank">${i + 1}</span>
+        <span class="rb-name">${esc(b.marka)}</span>
+        <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((b.count/max)*100)}%"></span></span>
+        <span class="rb-count">${b.count}</span>
+      </div>`).join('') + `</div>`;
+  }
+  html += `</div>`;
+
+  // ── Kısa genel özet ──
+  const totalAds = channels.reduce((s,c)=>s+(c.total_ads||0),0);
+  html += `<div class="stat-tiles">
+    <div class="stat-tile"><div class="stat-tile-num">${rep.total_channels ?? channels.length}</div><div class="stat-tile-lbl">Takipteki Kanal</div></div>
+    <div class="stat-tile"><div class="stat-tile-num">${rep.total_videos ?? 0}</div><div class="stat-tile-lbl">Analiz Edilen Video</div></div>
+    <div class="stat-tile"><div class="stat-tile-num">${week.video_count}</div><div class="stat-tile-lbl">Bu Hafta Video</div></div>
+    <div class="stat-tile red"><div class="stat-tile-num">${week.ad_frames}</div><div class="stat-tile-lbl">Bu Hafta Reklam</div></div>
+  </div>`;
+
+  // ── Kanallar (sade liste) ──
+  html += `<div class="section">
+    <div class="section-head">
+      <div class="section-title-lg">Kanallar</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${scanTypeSelector()}
+        <button class="btn sm" onclick="scanAll(24)"><i class="ti ti-refresh"></i> Tümünü Tara (24s)</button>
+        <button class="btn sm" onclick="addChannelPrompt()"><i class="ti ti-plus"></i> Kanal Ekle</button>
+      </div>
+    </div>`;
+  if (!channels.length) {
+    html += `<div class="empty-card" style="border:none;background:transparent">Henüz kanal yok. "Kanal Ekle" ile başla.</div>`;
+  } else {
+    html += `<div class="ch-list">` + channels.map(ch => {
       const initial = (ch.name || ch.id || '?').replace('@','').charAt(0).toUpperCase();
-      const topBrandsHtml = (ch.top_brands || []).slice(0, 4).map(b =>
-        `<span class="brand-pill ${b.count > 3 ? 'hot' : ''}">${esc(b.name)} ${b.count}</span>`
-      ).join('') || '<span style="color:var(--dimmer);font-size:11px">Henüz veri yok</span>';
-      const avatarHtml = ch.avatar_url
+      const avatar = ch.avatar_url
         ? `<img class="cc-avatar-img" src="${esc(ch.avatar_url)}" onerror="this.outerHTML='<div class=cc-avatar>${initial}</div>'">`
         : `<div class="cc-avatar">${initial}</div>`;
-
-      html += `<div class="channel-card" onclick="goChannel('${esc(ch.id)}')">
-        <div class="cc-head">
-          ${avatarHtml}
-          <div>
-            <div class="cc-name">${esc(ch.name || ch.id)}</div>
-            <div class="cc-handle">${esc(ch.id)}</div>
-          </div>
+      return `<div class="ch-row" onclick="goChannel('${esc(ch.id)}')">
+        ${avatar}
+        <div class="ch-row-info">
+          <div class="cc-name">${esc(ch.name || ch.id)}</div>
+          <div class="cc-handle">${ch.video_count||0} video analiz edildi</div>
         </div>
-        <div class="cc-stats">
-          <div class="cc-stat"><div class="cc-stat-num">${ch.video_count}</div><div class="cc-stat-lbl">Video</div></div>
-          <div class="cc-stat"><div class="cc-stat-num" style="color:var(--accent)">${ch.total_ads}</div><div class="cc-stat-lbl">Reklam</div></div>
-          <div class="cc-stat"><div class="cc-stat-num">${ch.channel_logos.length}</div><div class="cc-stat-lbl">Kanal Logo</div></div>
-        </div>
-        <div class="cc-top-brands">${topBrandsHtml}</div>
+        <div class="ch-row-ads">${ch.total_ads||0}<span>reklam</span></div>
+        <i class="ti ti-chevron-right" style="color:var(--dimmer)"></i>
       </div>`;
-    }
-    html += `</div>`;
+    }).join('') + `</div>`;
   }
+  html += `</div>`;
 
   $('main').innerHTML = html;
 }
