@@ -10,6 +10,7 @@ from services.youtube import fetch_channel_videos, channel_id_from_url, has_cook
 from services.job_manager import JOB_MANAGER
 from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
+    delete_video,
     update_detection, recompute_video_aggregates, set_channel_brand_flag,
     edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
     get_daily_report,
@@ -159,7 +160,8 @@ def users_endpoint():
     if request.method == "POST":
         data = request.get_json() or {}
         try:
-            create_user(data.get("username"), data.get("password"))
+            create_user(data.get("username"), data.get("password"),
+                        role=data.get("role", "user"))
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         return jsonify({"ok": True})
@@ -500,6 +502,26 @@ def video_detail(video_id):
             "sponsor_active_only": ch.get("sponsor_active_only", []),
         },
     })
+
+
+@api_bp.route("/api/video/<video_id>", methods=["DELETE"])
+def delete_video_endpoint(video_id):
+    """Bir analizi/videoyu tamamen sil (yönetici). before_request DELETE'i
+    kullanıcılara zaten kapatır; burada ek bir güvenlik gerekmiyor."""
+    v = get_video(video_id)
+    if not v:
+        return jsonify({"error": "Video bulunamadı"}), 404
+    delete_video(video_id)
+    # Efemeral frame'leri de temizle (varsa)
+    try:
+        import shutil
+        from config import FRAMES_DIR
+        d = FRAMES_DIR / video_id
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "deleted": video_id})
 
 
 @api_bp.route("/api/video/<video_id>/detection/<int:index>", methods=["POST"])

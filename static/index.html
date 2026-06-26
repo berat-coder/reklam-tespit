@@ -615,6 +615,15 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 .toast.success { border-left-color: var(--green); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
+/* Rol: kullanıcı (viewer) → tüm değiştirme kontrolleri gizli (sunucu da zorlar) */
+body.viewer .admin-only { display: none !important; }
+.role-badge { font-size: 9px; padding: 2px 7px; border-radius: 99px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); }
+.role-badge.viewer { background: var(--bg3); color: var(--dim); }
+.viewer-note { font-size: 11px; color: var(--dim); background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  display: inline-flex; align-items: center; gap: 6px; }
+
 @media (max-width: 800px) {
   .layout { grid-template-columns: 1fr; }
   .menu-toggle { display: flex; }
@@ -676,12 +685,16 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
-      <div class="setup-title" style="font-size:15px">👤 Kullanıcılar</div>
-      <div class="setup-desc">Giriş yapabilecek hesaplar. Buradan yeni hesap açabilirsin.</div>
+      <div class="setup-title" style="font-size:15px">👤 Kullanıcılar & Roller</div>
+      <div class="setup-desc"><strong>Yönetici</strong> her şeyi değiştirebilir. <strong>Görüntüleyici</strong> yalnızca görür — tarama, silme, düzenleme yapamaz. Ana hesap her zaman yöneticidir.</div>
       <div id="userList" style="margin-bottom:12px"></div>
       <input type="text" class="setup-input" id="newUser" placeholder="kullanıcı adı" style="margin-bottom:8px">
-      <input type="password" class="setup-input" id="newPass" placeholder="şifre">
-      <button class="btn full" onclick="createUser()" style="margin-top:8px"><i class="ti ti-user-plus"></i> Kullanıcı Ekle</button>
+      <input type="password" class="setup-input" id="newPass" placeholder="şifre" style="margin-bottom:8px">
+      <select class="setup-input" id="newRole" style="font-family:inherit">
+        <option value="user">Görüntüleyici (sadece görür)</option>
+        <option value="admin">Yönetici (her şeyi değiştirir)</option>
+      </select>
+      <button class="btn full" onclick="createUser()" style="margin-top:8px"><i class="ti ti-user-plus"></i> Hesap Ekle</button>
     </div>
   </div>
 </div>
@@ -701,7 +714,7 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
       <div class="key-card">
         <div class="key-row"><div class="dot" id="keyDot"></div><span id="keyStatus">Yükleniyor...</span></div>
         <div class="key-pv" id="keyPv"></div>
-        <span style="font-size:10px;color:var(--blue);cursor:pointer" onclick="openSetup()">Değiştir</span>
+        <span class="admin-only" style="font-size:10px;color:var(--blue);cursor:pointer" onclick="openSetup()">Değiştir</span>
       </div>
     </div>
 
@@ -713,7 +726,7 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
           <span id="queueLen" style="color:var(--dim)">0</span>
         </div>
         <div class="queue-msg" id="queueMsg">Hazır</div>
-        <button class="btn sm full" id="cancelQueueBtn" style="margin-top:6px;color:var(--red);border-color:var(--red)" onclick="cancelQueue()">
+        <button class="btn sm full admin-only" id="cancelQueueBtn" style="margin-top:6px;color:var(--red);border-color:var(--red)" onclick="cancelQueue()">
           <i class="ti ti-player-stop"></i> Tüm İşlemleri Durdur
         </button>
       </div>
@@ -731,7 +744,7 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goLive(null)" id="navLive" style="display:none">
           <i class="ti ti-broadcast" style="color:var(--accent)"></i> Canlı Analiz
         </div>
-        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); openSetup()">
+        <div class="nav-item admin-only" role="button" tabindex="0" onclick="toggleSidebar(false); openSetup()">
           <i class="ti ti-settings"></i> Ayarlar
         </div>
         <a class="nav-item" href="/logout" style="text-decoration:none;color:inherit">
@@ -770,6 +783,19 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 <script>
 const $ = id => document.getElementById(id);
 let state = { page: 'home', channelId: null, videoId: null, filter: 'all', browseFilter: 'all', scanType: 'all' };
+let IS_ADMIN = true;   // /api/me ile güncellenir; viewer ise değiştirme kontrolleri gizlenir
+
+async function loadMe() {
+  try {
+    const d = await (await fetch('/api/me')).json();
+    IS_ADMIN = !!d.is_admin;
+  } catch (e) { IS_ADMIN = false; }
+  document.body.classList.toggle('viewer', !IS_ADMIN);
+  if (!IS_ADMIN) {
+    const bv = document.querySelector('.brand-ver');
+    if (bv) bv.innerHTML = '<span class="role-badge viewer"><i class="ti ti-eye"></i> Görüntüleyici</span>';
+  }
+}
 
 // Tarama içerik tipi seçici (Tümü / Canlı Yayın / Video)
 const SCAN_TYPES = [{t:'all',l:'Tümü'},{t:'live',l:'Canlı Yayın'},{t:'video',l:'Video'}];
@@ -820,6 +846,7 @@ function toggleSidebar(force) {
 
 // ─── Init ───
 window.addEventListener('DOMContentLoaded', async () => {
+  await loadMe();
   await refreshKey();
   goHome();
   pollQueue();
@@ -840,7 +867,7 @@ async function refreshKey() {
     $('keyDot').classList.add('empty');
     $('keyStatus').textContent = 'Yok';
     $('keyPv').textContent = '';
-    $('setupOv').style.display = 'flex';
+    if (IS_ADMIN) $('setupOv').style.display = 'flex';
   }
 }
 function openSetup(section) {
@@ -908,25 +935,32 @@ async function loadUsers() {
     const d = await (await fetch('/api/users')).json();
     const admin = d.admin;
     const rows = [{username: admin, admin: true}].concat((d.users || []).filter(u => u.username !== admin));
-    box.innerHTML = rows.map(u => `
-      <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px">
+    box.innerHTML = rows.map(u => {
+      const isAdminRole = u.admin || u.role === 'admin';
+      const badge = u.admin
+        ? '<span class="role-badge">Ana hesap · Yönetici</span>'
+        : `<span class="role-badge ${isAdminRole ? '' : 'viewer'}">${isAdminRole ? 'Yönetici' : 'Görüntüleyici'}</span>`;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px">
         <i class="ti ti-user" style="color:var(--dim)"></i>
-        <span style="flex:1">${esc(u.username)}${u.admin ? ' <span style="color:var(--dim);font-size:11px">(ana hesap)</span>' : ''}</span>
+        <span style="flex:1">${esc(u.username)}</span>
+        ${badge}
         ${u.admin ? '' : `<button class="tespit-del" title="Sil" onclick="deleteUser('${jsq(u.username)}')"><i class="ti ti-trash"></i></button>`}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) {}
 }
 
 async function createUser() {
   const username = ($('newUser').value || '').trim();
   const password = ($('newPass').value || '').trim();
+  const role = ($('newRole') ? $('newRole').value : 'user');
   if (!username || !password) { toast('Kullanıcı adı ve şifre gerekli', 'error'); return; }
   const d = await (await fetch('/api/users', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username, password})
+    body: JSON.stringify({username, password, role})
   })).json();
   if (d.error) { toast(d.error, 'error'); return; }
-  toast(`"${username}" eklendi`, 'success');
+  toast(`"${username}" eklendi (${role === 'admin' ? 'Yönetici' : 'Görüntüleyici'})`, 'success');
   $('newUser').value = ''; $('newPass').value = '';
   loadUsers();
 }
@@ -1014,7 +1048,7 @@ async function loadHome() {
         <h1>Günlük Rapor</h1>
         <div class="subtitle">${dateStr}</div>
       </div>
-      <div class="quick-analyze">
+      <div class="quick-analyze admin-only">
         <input type="text" id="manualUrlInput" placeholder="YouTube linki yapıştır → analiz et"
           onkeypress="if(event.key==='Enter') analyzeManualUrl()">
         <button class="btn primary" onclick="analyzeManualUrl()"><i class="ti ti-player-play"></i> Analiz Et</button>
@@ -1064,7 +1098,7 @@ async function loadHome() {
   html += `<div class="section">
     <div class="section-head">
       <div class="section-title-lg">Kanallar</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="admin-only" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${scanTypeSelector()}
         <button class="btn sm" onclick="scanAll(24)"><i class="ti ti-refresh"></i> Tümünü Tara (24s)</button>
         <button class="btn sm" onclick="addChannelPrompt()"><i class="ti ti-plus"></i> Kanal Ekle</button>
@@ -1139,7 +1173,7 @@ async function loadAutoScanPanel() {
       <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.last_run_iso)}</div><div class="as-stat-lbl">Son çalışma</div></div>
       <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.next_run_iso)}</div><div class="as-stat-lbl">Sıradaki çalışma</div></div>
     </div>
-    <div class="as-actions">
+    <div class="as-actions admin-only">
       <button class="as-btn solid" onclick="runAutoScanNow(this)"><i class="ti ti-player-play"></i> Şimdi bir yayın tara</button>
       <button class="as-btn" onclick="openSetup('autoscan')"><i class="ti ti-settings"></i> Saatleri ayarla</button>
     </div>
@@ -1371,7 +1405,7 @@ function renderBrowseCards(videos, filter, channelId) {
     let statusBadge = '';
     let cardStyle = '';
     let clickHandler = `event.stopPropagation(); analyzeVideoFromBrowse('${esc(v.url)}', '${esc(channelId)}', this)`;
-    let actionBtn = `<button class="btn sm primary" onclick="${clickHandler}"><i class="ti ti-player-play"></i> Analiz Et</button>`;
+    let actionBtn = `<button class="btn sm primary admin-only" onclick="${clickHandler}"><i class="ti ti-player-play"></i> Analiz Et</button>`;
 
     if (v.status === 'analyzed') {
       statusBadge = '<span class="video-ad-badge zero">Tamamlandı</span>';
@@ -1717,12 +1751,12 @@ async function loadChannel(id) {
         <div class="subtitle">${esc(ch.id)} · ${d.videos.length} analiz edilen video</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${scanTypeSelector()}
-        <button class="btn primary" onclick="scanChannel('${esc(ch.url)}', 24)">
+        <span class="admin-only" style="display:contents">${scanTypeSelector()}</span>
+        <button class="btn primary admin-only" onclick="scanChannel('${esc(ch.url)}', 24)">
           <i class="ti ti-refresh"></i> Son 24h Tara
         </button>
-        <button class="btn" onclick="scanChannel('${esc(ch.url)}', 168)">Son 1 Hafta</button>
-        <button class="btn" onclick="goBrowse('${esc(ch.id)}')">
+        <button class="btn admin-only" onclick="scanChannel('${esc(ch.url)}', 168)">Son 1 Hafta</button>
+        <button class="btn admin-only" onclick="goBrowse('${esc(ch.id)}')">
           <i class="ti ti-list-search"></i> Video Seç
         </button>
         <button class="btn" onclick="exportCSV('/api/channel/${encodeURIComponent(ch.id)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
@@ -1830,8 +1864,8 @@ async function renderChannelRules(chId) {
       ${suggestions.map(s => `
         <div class="rule-row">
           <span style="flex:1">"<strong>${esc(s.marka)}</strong>"yi ${s.count} kez "reklam değil" yaptın — bu kanalda hep yok sayayım mı?</span>
-          <button class="btn sm" style="color:var(--green);border-color:var(--green)" onclick="ruleApprove('${jsq(chId)}','${jsq(s.marka)}')"><i class="ti ti-check"></i> Onayla</button>
-          <button class="btn sm" onclick="ruleReject('${jsq(chId)}','${jsq(s.marka)}')">Yoksay</button>
+          <button class="btn sm admin-only" style="color:var(--green);border-color:var(--green)" onclick="ruleApprove('${jsq(chId)}','${jsq(s.marka)}')"><i class="ti ti-check"></i> Onayla</button>
+          <button class="btn sm admin-only" onclick="ruleReject('${jsq(chId)}','${jsq(s.marka)}')">Yoksay</button>
         </div>`).join('')}
     </div>`;
   }
@@ -1839,10 +1873,10 @@ async function renderChannelRules(chId) {
   const chips = [];
   aliases.forEach(([src, rule]) => chips.push(
     `<span class="rule-chip"><i class="ti ti-arrows-exchange"></i> ${esc(src)} → <strong>${esc(rule.to)}</strong>
-      <button onclick="ruleRemove('${jsq(chId)}','alias','${jsq(src)}')">×</button></span>`));
+      <button class="admin-only" onclick="ruleRemove('${jsq(chId)}','alias','${jsq(src)}')">×</button></span>`));
   ignored.forEach(m => chips.push(
     `<span class="rule-chip"><i class="ti ti-eye-off"></i> ${esc(m)} <span style="color:var(--dimmer)">(reklam değil)</span>
-      <button onclick="ruleRemove('${jsq(chId)}','ignore','${jsq(m)}')">×</button></span>`));
+      <button class="admin-only" onclick="ruleRemove('${jsq(chId)}','ignore','${jsq(m)}')">×</button></span>`));
   if (chips.length) {
     h += `<div style="margin-top:${suggestions.length?'12px':'0'}">
       <div style="font-size:11px;color:var(--dim);margin-bottom:6px">Aktif kurallar</div>
@@ -2059,6 +2093,7 @@ async function loadAnalyses() {
           <div class="brand-vid-ch">${esc(v.channel_name)} · ${esc((v.analyzed_at||'').slice(0,10))} · ${v.total_frames} kare${(v.top_brands||[]).length ? ' · ' + v.top_brands.map(b=>esc(b[0])).join(', ') : ''}</div>
         </div>
         <div class="recent-ads">${v.ad_frame_count} reklam</div>
+        <button class="tespit-del admin-only" title="Analizi sil" onclick="event.stopPropagation(); deleteAnalysis('${jsq(v.id)}', loadAnalyses)"><i class="ti ti-trash"></i></button>
       </div>`).join('')}</div>`;
   }
   $('main').innerHTML = html;
@@ -2125,6 +2160,17 @@ function exportCSV(url) {
   window.location.href = url;
 }
 
+async function deleteAnalysis(videoId, after) {
+  if (!IS_ADMIN) return;
+  if (!confirm('Bu analiz/tarama TAMAMEN silinecek (tüm kareler dahil, geri alınamaz). Devam?')) return;
+  try {
+    const d = await (await fetch('/api/video/' + encodeURIComponent(videoId), {method: 'DELETE'})).json();
+    if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+    toast('Analiz silindi', 'success');
+    if (typeof after === 'function') after();
+  } catch (e) { toast('Silme hatası: ' + e.message, 'error'); }
+}
+
 async function loadVideo(id) {
   state.videoId = id;
   const r = await fetch('/api/video/' + encodeURIComponent(id));
@@ -2147,6 +2193,7 @@ async function loadVideo(id) {
       <div class="export-bar">
         <button class="btn" onclick="exportCSV('/api/video/${encodeURIComponent(id)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
         <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF / Yazdır</button>
+        <button class="btn admin-only" style="color:var(--red);border-color:var(--red)" onclick="deleteAnalysis('${esc(id)}', ()=>goChannel('${esc(ch.id)}'))"><i class="ti ti-trash"></i> Analizi Sil</button>
       </div>
     </div>
 
@@ -2272,7 +2319,7 @@ function overlayRow(o, i) {
       <div class="overlay-name">Sürekli <strong>${esc(o.marka)}</strong></div>
       <div class="overlay-meta">Frame'lerin %${pct}'inde · ${label}</div>
     </div>
-    <div class="overlay-actions">${actions}</div>
+    <div class="overlay-actions admin-only">${actions}</div>
   </div>`;
 }
 
@@ -2332,7 +2379,7 @@ function renderBrandReport(report) {
           <div class="brand-card-chips">${chips}</div>
         </div>
         <div class="brand-card-span">${span}</div>
-        <div class="brand-card-acts">${sponsorBtn}${activeOnlyBtn}${logoBtn}${renameBtn}${removeBtn}</div>
+        <div class="brand-card-acts admin-only">${sponsorBtn}${activeOnlyBtn}${logoBtn}${renameBtn}${removeBtn}</div>
       </div>
       <div class="brand-frames" id="bframes-${i}" style="display:none"></div>
     </div>`;
@@ -2495,36 +2542,38 @@ function showFrameDetail(idx) {
           ${t.konum ? '<div style="color:var(--dim);margin-top:2px">' + esc(t.konum) + '</div>' : ''}
           ${t.detay ? '<div style="margin-top:3px">' + esc(t.detay) + '</div>' : ''}
         </div>
-        <button class="tespit-del" title="Bu tespiti sil (yanlış)" onclick="correctDetection(${idx}, {action:'remove_tespit', tespit_index:${i}})"><i class="ti ti-x"></i></button>
+        ${IS_ADMIN ? `<button class="tespit-del" title="Bu tespiti sil (yanlış)" onclick="correctDetection(${idx}, {action:'remove_tespit', tespit_index:${i}})"><i class="ti ti-x"></i></button>` : ''}
       </div>`;
     });
   }
   body += `</div>`;
-  if (d.reklam_var) {
-    body += `<button class="btn full" style="margin-top:12px;color:var(--red);border-color:var(--red)" onclick="correctDetection(${idx}, {action:'mark_clean'})">
-      <i class="ti ti-flag-off"></i> Bu kare reklam değil — temizle
-    </button>`;
-  }
-  // Manuel reklam ekleme formu (kaçırılan reklamı el ile işaretle)
-  const TURLER = ['Alt Bant','Köşe Banner','Video Reklam','Pre-Roll','Mid-Roll','Sponsor Bandı','Ürün Yerleştirme','Geçiş Karesi','Arka Plan'];
-  const KONUMLAR = ['sağ üst','sol üst','sağ alt','sol alt','alt orta','üst orta','merkez','tam ekran'];
-  body += `
-    <button class="btn full" style="margin-top:8px" onclick="toggleAddAd()">
-      <i class="ti ti-plus"></i> Manuel reklam ekle
-    </button>
-    <div id="addAdForm" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
-      <div class="add-field"><label>Marka</label>
-        <input id="aa-marka" type="text" placeholder="Örn: Üstad"></div>
-      <div class="add-field"><label>Tür</label>
-        <select id="aa-tur">${TURLER.map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>
-      <div class="add-field"><label>Konum</label>
-        <select id="aa-konum"><option value="">—</option>${KONUMLAR.map(k=>`<option value="${k}">${k}</option>`).join('')}</select></div>
-      <div class="add-field"><label>Açıklama (ops.)</label>
-        <input id="aa-detay" type="text" placeholder="kısa not"></div>
-      <button class="btn primary full" style="margin-top:6px" onclick="addAdFromModal(${idx})">
-        <i class="ti ti-check"></i> Reklam olarak ekle
+  if (IS_ADMIN) {
+    if (d.reklam_var) {
+      body += `<button class="btn full" style="margin-top:12px;color:var(--red);border-color:var(--red)" onclick="correctDetection(${idx}, {action:'mark_clean'})">
+        <i class="ti ti-flag-off"></i> Bu kare reklam değil — temizle
+      </button>`;
+    }
+    // Manuel reklam ekleme formu (kaçırılan reklamı el ile işaretle)
+    const TURLER = ['Alt Bant','Köşe Banner','Video Reklam','Pre-Roll','Mid-Roll','Sponsor Bandı','Ürün Yerleştirme','Geçiş Karesi','Arka Plan'];
+    const KONUMLAR = ['sağ üst','sol üst','sağ alt','sol alt','alt orta','üst orta','merkez','tam ekran'];
+    body += `
+      <button class="btn full" style="margin-top:8px" onclick="toggleAddAd()">
+        <i class="ti ti-plus"></i> Manuel reklam ekle
       </button>
-    </div>`;
+      <div id="addAdForm" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div class="add-field"><label>Marka</label>
+          <input id="aa-marka" type="text" placeholder="Örn: Üstad"></div>
+        <div class="add-field"><label>Tür</label>
+          <select id="aa-tur">${TURLER.map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>
+        <div class="add-field"><label>Konum</label>
+          <select id="aa-konum"><option value="">—</option>${KONUMLAR.map(k=>`<option value="${k}">${k}</option>`).join('')}</select></div>
+        <div class="add-field"><label>Açıklama (ops.)</label>
+          <input id="aa-detay" type="text" placeholder="kısa not"></div>
+        <button class="btn primary full" style="margin-top:6px" onclick="addAdFromModal(${idx})">
+          <i class="ti ti-check"></i> Reklam olarak ekle
+        </button>
+      </div>`;
+  }
   $('modalBody').innerHTML = body;
   $('modal').classList.add('on');
 }

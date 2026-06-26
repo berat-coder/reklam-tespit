@@ -17,16 +17,12 @@ try:
 except Exception as e:
     print(f"[BAKIM] Frame temizleme atlandı: {e}")
 
-from models.database import init_db, verify_user
+from models.database import init_db, verify_user, get_user_role
 from routes.api import api_bp
+from auth import APP_USERNAME, APP_PASSWORD, AUTH_ENABLED, is_admin, current_user
+from flask import jsonify
 
 app = Flask(__name__, static_folder=None)
-
-# ── Kimlik doğrulama (basit oturum) ──
-# APP_PASSWORD ayarlıysa giriş zorunlu olur; yoksa (local) kapalı kalır.
-APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
-AUTH_ENABLED = bool(APP_PASSWORD)
 # Oturum anahtarı: sabit olsun ki deploy/restart'ta çıkış yapılmasın
 app.secret_key = (
     os.environ.get("SECRET_KEY")
@@ -80,16 +76,33 @@ button:hover{background:#000}
 </form></body></html>"""
 
 
+# Yöneticiye özel GET uçları (kullanıcı yönetimi gibi okuma işlemleri de gizli).
+_ADMIN_ONLY_GET_PREFIXES = ("/api/users",)
+
+
 @app.before_request
 def _require_login():
-    if not AUTH_ENABLED or session.get("logged_in"):
+    if request.path in ("/login", "/logout"):
         return
-    if request.path == "/login":
+    # Auth kapalıysa (local) herkes yönetici — geç.
+    if not AUTH_ENABLED:
         return
-    if request.path.startswith("/api/"):
-        return Response('{"error":"Giriş gerekli","auth_required":true}',
-                        status=401, mimetype="application/json")
-    return redirect("/login")
+    # Giriş yapılmamış
+    if not session.get("logged_in"):
+        if request.path.startswith("/api/"):
+            return Response('{"error":"Giriş gerekli","auth_required":true}',
+                            status=401, mimetype="application/json")
+        return redirect("/login")
+    # ── Rol zorlaması: yönetici değilse SADECE GÖRÜNTÜLEME (GET) ──
+    if not is_admin():
+        mutating = request.method not in ("GET", "HEAD", "OPTIONS")
+        admin_only_get = any(request.path.startswith(p) for p in _ADMIN_ONLY_GET_PREFIXES)
+        if (mutating or admin_only_get) and request.path.startswith("/api/"):
+            return Response(
+                '{"error":"Bu işlem için yönetici yetkisi gerekli","forbidden":true}',
+                status=403, mimetype="application/json")
+        if mutating and not request.path.startswith("/api/"):
+            return Response("Yetki yok", status=403)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -101,9 +114,16 @@ def login():
         u = request.form.get("username", "")
         pw = request.form.get("password", "")
         # Ana hesap (env) VEYA Ayarlar'dan oluşturulmuş DB kullanıcısı
-        if (u == APP_USERNAME and pw == APP_PASSWORD) or verify_user(u, pw):
+        if u == APP_USERNAME and pw == APP_PASSWORD:
             session["logged_in"] = True
             session["username"] = u
+            session["role"] = "admin"            # ana hesap her zaman yönetici
+            session.permanent = True
+            return redirect("/")
+        if verify_user(u, pw):
+            session["logged_in"] = True
+            session["username"] = u
+            session["role"] = get_user_role(u)   # DB kullanıcısının rolü
             session.permanent = True
             return redirect("/")
         error = "Hatalı kullanıcı adı veya şifre"
@@ -114,6 +134,11 @@ def login():
 def logout():
     session.clear()
     return redirect("/login")
+
+
+@app.route("/api/me")
+def api_me():
+    return jsonify(current_user())
 
 
 @app.route("/")

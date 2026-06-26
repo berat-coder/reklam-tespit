@@ -96,22 +96,37 @@ _MIGRATIONS = [
     ("channels", "rule_state", "TEXT NOT NULL DEFAULT '{}'"),
     ("videos", "persistent_overlays", "TEXT NOT NULL DEFAULT '[]'"),
     ("detections", "manual_clean", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "role", "TEXT NOT NULL DEFAULT 'user'"),
 ]
 
 
 # ── Kullanıcılar (çoklu giriş) ─────────────────────────────────────────────────
 
-def create_user(username, password):
+def create_user(username, password, role="user"):
     username = (username or "").strip()
+    role = "admin" if (role or "").strip().lower() == "admin" else "user"
     if not username or not password:
         raise ValueError("Kullanıcı adı ve şifre gerekli")
     with get_db() as conn:
         if conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
             raise ValueError("Bu kullanıcı adı zaten var")
         conn.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-            (username, generate_password_hash(password), datetime.utcnow().isoformat()),
+            "INSERT INTO users (username, password_hash, created_at, role) "
+            "VALUES (?, ?, ?, ?)",
+            (username, generate_password_hash(password),
+             datetime.utcnow().isoformat(), role),
         )
+
+
+def get_user_role(username):
+    """DB kullanıcısının rolü ('admin'|'user'); yoksa 'user'."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT role FROM users WHERE username = ?", ((username or "").strip(),)
+        ).fetchone()
+    if not row:
+        return "user"
+    return _col(row, "role", "user") or "user"
 
 
 def verify_user(username, password):
@@ -125,9 +140,14 @@ def verify_user(username, password):
 def list_users():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT username, created_at FROM users ORDER BY created_at"
+            "SELECT username, created_at, role FROM users ORDER BY created_at"
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["role"] = _col(r, "role", "user") or "user"
+            out.append(d)
+        return out
 
 
 def delete_user(username):
@@ -557,6 +577,17 @@ def get_channel_videos(ch_id, completed_only=False):
             q += " AND completed = 1"
         q += " ORDER BY analyzed_at DESC"
         return [_vid(r) for r in conn.execute(q, params).fetchall()]
+
+
+def delete_video(video_id):
+    """Bir videoyu/analizi TAMAMEN siler: tespitler + video kaydı + live_seen
+    izi. Tekrar taranabilsin diye live_seen de temizlenir. (Yönetici işlemi.)"""
+    if not video_id:
+        return
+    with get_db() as conn:
+        conn.execute("DELETE FROM detections WHERE video_id = ?", (video_id,))
+        conn.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+        conn.execute("DELETE FROM live_seen WHERE video_id = ?", (video_id,))
 
 
 def is_video_completed(video_id):
