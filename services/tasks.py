@@ -121,14 +121,18 @@ def _extract_frames_ffmpeg_linear(stream_url, frames_dir, interval, width,
         "-q:v", "4",
         str(frames_dir / "frame_%04d.jpg"),
     ]
+    from config import LIVE_SAMPLE_SECONDS
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     start = time.monotonic()
+    # Süresi bilinmeyen (şu an canlı) yayın: sonsuza dek okumamak için sınırlı süre
+    # örnekle. Yayını okumak gerçek-zaman hızındadır → bu kadar saniyelik pencere.
+    max_secs = max(60, LIVE_SAMPLE_SECONDS)
     while proc.poll() is None:
         time.sleep(1.5)
         if cancel_check and cancel_check():
             proc.kill()
             return []
-        if time.monotonic() - start > 1800:
+        if time.monotonic() - start > max_secs:
             proc.kill()
             break
         if on_progress:
@@ -159,7 +163,8 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
     results = [None] * len(timestamps)
     done = 0
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    ex = ThreadPoolExecutor(max_workers=6)
+    try:
         futs = {}
         for idx, t in enumerate(timestamps):
             out_path = frames_dir / f"frame_{idx + 1:04d}.jpg"
@@ -174,6 +179,9 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
                 on_progress(done, len(timestamps))
             if cancel_check and cancel_check():
                 break
+    finally:
+        # İptalde bekleyen işleri iptal et — "Tümünü Durdur" anında etki etsin
+        ex.shutdown(wait=False, cancel_futures=True)
 
     return [r for r in results if r]
 
@@ -259,10 +267,21 @@ def process_channel_scan_sync(job, _api_key, job_manager):
                      job.get("content_type", "all"))
 
 
+def _cancelled(job_manager):
+    return bool(getattr(job_manager, "_cancel_flag", None)
+                and job_manager._cancel_flag.is_set())
+
+
 def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
     try:
-        res = fetch_channel_videos(channel_url, last_hours=last_hours,
-                                   content_type=content_type)
+        # Canlı içerik → SIKI tarih penceresi (sadece son `last_hours` saatteki
+        # canlı yayınlar). 'all'/'video' → normal liste.
+        if content_type == "live":
+            from services.youtube import fetch_live_streams
+            res = fetch_live_streams(channel_url, last_hours=last_hours)
+        else:
+            res = fetch_channel_videos(channel_url, last_hours=last_hours,
+                                       content_type=content_type)
     except Exception as e:
         print(f"[KANAL-TARAMA] Hata: {e}")
         code, _ = _classify_error(str(e))
@@ -281,6 +300,9 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
     from models.database import is_live_seen, mark_live_seen
     added = 0
     for v in res["videos"]:
+        if _cancelled(job_manager):     # "Tümünü Durdur" → kuyruğu doldurmayı bırak
+            print("[KANAL-TARAMA] iptal edildi — kalan videolar eklenmedi")
+            break
         if is_video_completed(v["id"]):
             continue
         # Canlı yayın dedup: gece otomatik taraması ile çakışmayı önle

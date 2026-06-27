@@ -119,6 +119,8 @@ class JobManager:
     # ── Kuyruk yönetimi ───────────────────────────────────────────────────────
 
     def add_video(self, video_url, channel_id=None, channel_name=None, priority=False):
+        if priority:
+            _clear_pause()   # manuel analiz → molayı kaldır
         if USE_REDIS:
             from services.tasks import process_video_rq
             job = _rq.enqueue(
@@ -143,6 +145,7 @@ class JobManager:
         return job["id"]
 
     def add_channel_scan(self, channel_url, last_hours=24, content_type="all"):
+        _clear_pause()   # manuel kanal taraması → molayı kaldır
         if USE_REDIS:
             from services.tasks import process_channel_scan_rq
             job = _rq.enqueue(
@@ -180,6 +183,9 @@ class JobManager:
             with self._lock:
                 self._queue.clear()
             self._cancel_flag.set()
+            # Gece zamanlayıcısı da kısa süre (10 dk) yeni iş eklemesin — manuel
+            # bir tarama/analiz başlatınca bu mola otomatik kalkar.
+            _set_pause(600)
 
     def queue_status(self):
         if USE_REDIS:
@@ -254,6 +260,34 @@ class JobManager:
 def load_config():
     from config import load_config as _lc
     return _lc()
+
+
+# ── Tarama molası (manuel "Tümünü Durdur" sonrası gece zamanlayıcısını sustur) ──
+
+def _set_pause(seconds):
+    try:
+        import time as _t
+        from models.database import kv_set
+        kv_set("scan_paused_until", _t.time() + seconds)
+    except Exception:
+        pass
+
+
+def _clear_pause():
+    try:
+        from models.database import kv_set
+        kv_set("scan_paused_until", 0)
+    except Exception:
+        pass
+
+
+def is_scan_paused():
+    try:
+        import time as _t
+        from models.database import kv_get
+        return float(kv_get("scan_paused_until", 0) or 0) > _t.time()
+    except Exception:
+        return False
 
 
 JOB_MANAGER = JobManager()

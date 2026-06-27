@@ -83,6 +83,10 @@ SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
 # klasörleri otomatik silinir (volume dolmasın). Yalnız kanıt kareleri saklandığı
 # için bu sınıra ulaşmak zordur; yine de güvenlik için.
 FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 300)
+# Süresi BİLİNMEYEN (şu an canlı) yayında lineer ffmpeg en fazla bu kadar saniye
+# okur — yoksa canlı yayın sonsuza dek okunur, kuyruk tıkanır. Bitmiş yayınlar
+# (süresi bilinen) bundan etkilenmez; tüm VOD paralel seek ile çıkarılır.
+LIVE_SAMPLE_SECONDS = _int_env("LIVE_SAMPLE_SECONDS", 600)
 
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",

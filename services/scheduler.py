@@ -178,7 +178,8 @@ def _loop():
         try:
             cfg = load_config()
             asc = cfg.get("auto_scan", {}) or {}
-            if asc.get("enabled", True):
+            from services.job_manager import is_scan_paused
+            if asc.get("enabled", True) and not is_scan_paused():
                 tz = asc.get("tz_offset", 3)
                 eff = _eff_now(tz)
                 cur_min = eff.hour * 60 + eff.minute

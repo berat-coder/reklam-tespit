@@ -785,6 +785,7 @@ body.viewer .admin-only { display: none !important; }
         <span class="recent-badge" id="recentCount"></span>
         <i class="ti ti-chevron-right" style="margin-left:4px"></i>
       </div>
+      <div id="recentList" style="margin-top:6px"></div>
     </div>
 
     <div style="font-size:10px;color:var(--dimmer);text-align:center;padding-top:10px;border-top:1px solid var(--border)">
@@ -2772,12 +2773,28 @@ function closeModal() { $('modal').classList.remove('on'); }
 
 // ─── Sidebar recent videos ───
 async function loadRecentSidebar() {
-  // Liste artık "Tüm Analizler" tam sayfasında; sidebar'da sadece toplam sayı rozeti.
   try {
     const r = await fetch('/api/analyses');
     const d = await r.json();
+    const vids = d.videos || [];
     const badge = $('recentCount');
-    if (badge) badge.textContent = (d.videos && d.videos.length) ? d.videos.length : '';
+    if (badge) badge.textContent = vids.length ? vids.length : '';
+    const list = $('recentList');
+    if (list) {
+      if (!vids.length) {
+        list.innerHTML = '<div style="font-size:11px;color:var(--dimmer);padding:4px 8px">Henüz analiz yok</div>';
+      } else {
+        list.innerHTML = vids.slice(0, 6).map(v => `
+          <div class="recent-item" onclick="goVideo('${jsq(v.id)}')" title="${esc(v.title)}">
+            <img class="recent-thumb" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
+            <div class="recent-info">
+              <div class="recent-title">${esc(v.title)}</div>
+              <div class="recent-ch">${esc(v.channel_name||'')}</div>
+            </div>
+            <span class="recent-ads">${v.ad_frame_count}</span>
+          </div>`).join('');
+      }
+    }
   } catch (e) {}
 }
 

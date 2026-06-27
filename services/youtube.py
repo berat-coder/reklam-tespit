@@ -300,6 +300,9 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all", tabs=No
                 # video / url / url_transparent / None → hepsini al (canlı yayın dahil)
                 if entry.get("_type") not in (None, "url", "video", "url_transparent"):
                     continue
+                # Yaklaşan (henüz başlamamış) yayınları atla — gereksiz
+                if entry.get("live_status") == "is_upcoming":
+                    continue
                 # Shorts atla (kısa süreli veya /shorts/ url)
                 _dur = entry.get("duration", 0) or 0
                 _url = entry.get("url", "") or ""
