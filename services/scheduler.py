@@ -68,27 +68,44 @@ def _epoch_to_eff_iso(epoch, tz):
 # ── Keşif + analiz ─────────────────────────────────────────────────────────────
 
 def _discover(cfg, lookback, state):
-    """Tüm kanallarda canlı yayınları keşfet, yeni olanları live_seen'e işle."""
+    """Tüm kanallarda SON `lookback` saatteki canlı yayınları keşfet, yeni
+    olanları live_seen'e işle. Her kanal için sonuç loglanır (Durum paneli)."""
     from services.youtube import fetch_live_streams, channel_id_from_url
+    channels = cfg.get("channels", [])
     new_count = 0
-    for url in cfg.get("channels", []):
+    for url in channels:
         try:
             res = fetch_live_streams(url, last_hours=lookback)
         except Exception as e:
             print(f"[OTO-TARAMA] keşif hata ({url}): {e}")
+            code, _ = _classify(str(e))
+            log_event("channel_scan", url, "error", code, str(e)[:200])
             continue
         cid = channel_id_from_url(url)
+        cname = res.get("channel_name") or cid
+        ch_new = 0
         for v in res.get("videos", []):
             vid = v.get("id")
             if not vid or is_live_seen(vid) or is_video_completed(vid):
                 continue
             mark_live_seen(vid, channel_id=cid, title=v.get("title", ""),
                            url=v.get("url", ""), analyzed=False)
-            new_count += 1
+            ch_new += 1
+        new_count += ch_new
+        found = len(res.get("videos", []))
+        log_event("channel_scan", cname, "ok", "discover",
+                  f"{found} canlı yayın (son {lookback}s) · {ch_new} yeni")
     if new_count:
         state["tonight_found"] = state.get("tonight_found", 0) + new_count
-        print(f"[OTO-TARAMA] {new_count} yeni canlı yayın keşfedildi")
+        print(f"[OTO-TARAMA] toplam {new_count} yeni canlı yayın keşfedildi")
     return new_count
+
+
+def _classify(err):
+    e = (err or "").lower()
+    if "sign in" in e:
+        return "cookie_expired", "cookie"
+    return "scan_error", "transient"
 
 
 def _analyze_one(asc, state):

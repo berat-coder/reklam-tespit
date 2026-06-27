@@ -2012,10 +2012,15 @@ async function loadStatus() {
   const log = d.log || [];
   const failed = d.failed_lives || [];
 
-  let html = `<div class="page-header"><div>
-      <h1>Sistem Durumu</h1>
-      <div class="subtitle">Sağlık, tarama geçmişi ve başarısız işler</div>
-    </div></div>`;
+  let html = `<div class="page-header">
+      <div>
+        <h1>Sistem Durumu</h1>
+        <div class="subtitle">Sağlık, tarama geçmişi ve başarısız işler</div>
+      </div>
+      <div class="export-bar">
+        <button class="btn admin-only" style="color:var(--red);border-color:var(--red)" onclick="clearAutoScans(this)"><i class="ti ti-trash"></i> Son taramaları sil</button>
+      </div>
+    </div>`;
 
   // Sağlık kartları
   const cookieOk = h.cookie_ok !== false;
@@ -2071,6 +2076,21 @@ async function loadStatus() {
   }
   html += `</div>`;
   $('main').innerHTML = html;
+}
+
+async function clearAutoScans(btn) {
+  if (!IS_ADMIN) return;
+  if (!confirm('Son ~30 saatte OTOMATİK taramayla analiz edilen tüm videolar tamamen silinecek (geri alınamaz). Elle analiz ettiklerin etkilenmez. Devam?')) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Siliniyor...'; }
+  try {
+    const d = await (await fetch('/api/maintenance/clear-auto-scans', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hours: 30})
+    })).json();
+    if (d.error) toast('Hata: ' + d.error, 'error');
+    else toast(`${d.deleted} otomatik tarama silindi`, 'success', 5000);
+  } catch (e) { toast('Silme hatası: ' + e.message, 'error'); }
+  loadStatus();
 }
 
 // ─── Sağlık şeridi + global cookie uyarısı ───

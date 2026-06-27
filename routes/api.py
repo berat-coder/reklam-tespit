@@ -10,7 +10,7 @@ from services.youtube import fetch_channel_videos, channel_id_from_url, has_cook
 from services.job_manager import JOB_MANAGER
 from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
-    delete_video,
+    delete_video, list_recent_auto_scan_video_ids,
     update_detection, recompute_video_aggregates, set_channel_brand_flag,
     edit_brand_global, get_dashboard_data, get_brand_appearances, get_all_videos,
     get_daily_report,
@@ -315,6 +315,29 @@ def scan_log_endpoint():
         "log": get_scan_log(limit),
         "failed_lives": list_failed_live(30),
     })
+
+
+@api_bp.route("/api/maintenance/clear-auto-scans", methods=["POST"])
+def clear_auto_scans():
+    """Son N saatte otomatik taramayla analiz edilmiş videoları TAMAMEN sil
+    (yanlış/şişik gece taramasını temizle). Yönetici (before_request zorlar)."""
+    data = request.get_json() or {}
+    try:
+        hours = int(data.get("hours", 30))
+    except (TypeError, ValueError):
+        hours = 30
+    ids = list_recent_auto_scan_video_ids(hours)
+    import shutil as _sh
+    from config import FRAMES_DIR
+    for vid in ids:
+        delete_video(vid)   # tespit + video + live_seen kaydını siler
+        try:
+            d = FRAMES_DIR / vid
+            if d.exists():
+                _sh.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+    return jsonify({"ok": True, "deleted": len(ids), "hours": hours})
 
 
 @api_bp.route("/api/auto-scan/run-now", methods=["POST"])

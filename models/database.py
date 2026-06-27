@@ -721,6 +721,19 @@ def get_channel_videos(ch_id, completed_only=False):
         return [_vid(r) for r in conn.execute(q, params).fetchall()]
 
 
+def list_recent_auto_scan_video_ids(hours=30):
+    """Son `hours` saatte otomatik taramayla (live_seen) analiz edilmiş video
+    id'leri — 'dün geceki taramaları sil' için."""
+    cut = (datetime.utcnow() - __import__("datetime").timedelta(hours=hours)).isoformat()
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT v.id AS id FROM videos v
+            JOIN live_seen ls ON ls.video_id = v.id
+            WHERE v.analyzed_at >= ?
+        """, (cut,)).fetchall()
+        return [r["id"] for r in rows]
+
+
 def delete_video(video_id):
     """Bir videoyu/analizi TAMAMEN siler: tespitler + video kaydı + live_seen
     izi. Tekrar taranabilsin diye live_seen de temizlenir. (Yönetici işlemi.)"""
