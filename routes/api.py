@@ -340,6 +340,13 @@ def clear_auto_scans():
     return jsonify({"ok": True, "deleted": len(ids), "hours": hours})
 
 
+@api_bp.route("/api/live-archive")
+def live_archive():
+    """Gece/canlı taramayla analiz edilmiş yayınlar (güne göre gruplamak için)."""
+    from models.database import get_live_streams_archive
+    return jsonify({"videos": get_live_streams_archive(200)})
+
+
 @api_bp.route("/api/auto-scan/run-now", methods=["POST"])
 def auto_scan_run_now():
     from services.scheduler import run_tick_now, get_status

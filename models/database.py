@@ -721,6 +721,31 @@ def get_channel_videos(ch_id, completed_only=False):
         return [_vid(r) for r in conn.execute(q, params).fetchall()]
 
 
+def get_live_streams_archive(limit=200):
+    """Otomatik/canlı taramayla analiz edilmiş yayınlar (live_seen ∩ tamamlanmış
+    videolar) — 'Canlı Yayınlar' sayfası için, en yeni analiz önce. Frontend
+    bunları güne göre gruplar."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT v.id AS id, v.title AS title, v.thumbnail AS thumbnail,
+                   v.ad_frame_count AS ad_frame_count, v.analyzed_at AS analyzed_at,
+                   v.duration AS duration, v.channel_id AS channel_id,
+                   c.name AS channel_name
+            FROM live_seen ls
+            JOIN videos v ON v.id = ls.video_id
+            LEFT JOIN channels c ON c.id = v.channel_id
+            WHERE v.completed = 1
+            ORDER BY v.analyzed_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["channel_name"] = d.get("channel_name") or d.get("channel_id")
+            out.append(d)
+        return out
+
+
 def list_recent_auto_scan_video_ids(hours=30):
     """Son `hours` saatte otomatik taramayla (live_seen) analiz edilmiş video
     id'leri — 'dün geceki taramaları sil' için."""

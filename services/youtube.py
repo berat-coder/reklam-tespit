@@ -88,6 +88,9 @@ def _resolve_video_date(url):
         return None
     if not info:
         return None
+    # Yaklaşan (henüz başlamamış) yayın → pencere dışı say (analiz edilmesin)
+    if info.get("live_status") == "is_upcoming":
+        return None
     ts = _entry_ts(info)
     if ts:
         return ts

@@ -764,6 +764,9 @@ body.viewer .admin-only { display: none !important; }
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goDashboard()" id="navDash">
           <i class="ti ti-chart-bar"></i> Panel
         </div>
+        <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goLiveArchive()" id="navArchive">
+          <i class="ti ti-broadcast"></i> Canlı Yayınlar
+        </div>
         <div class="nav-item" role="button" tabindex="0" onclick="toggleSidebar(false); goStatus()" id="navStatus">
           <i class="ti ti-activity-heartbeat"></i> Durum
         </div>
@@ -1213,8 +1216,8 @@ async function loadAutoScanPanel() {
   // Bu gece yakalanan canlı yayınlar
   html += `<div class="section">
     <div class="section-head">
-      <div class="section-title-lg"><i class="ti ti-broadcast" style="color:var(--accent)"></i> Yakalanan Canlı Yayınlar</div>
-      <div class="report-meta">${lives.length} yayın</div>
+      <div class="section-title-lg"><i class="ti ti-broadcast" style="color:var(--accent)"></i> Bu Gece Yakalananlar</div>
+      <div class="report-meta" style="cursor:pointer;color:var(--accent)" onclick="goLiveArchive()">Tümü (günlük) →</div>
     </div>`;
   if (!lives.length) {
     html += `<div class="empty-card" style="border:none;background:transparent">Henüz canlı yayın yakalanmadı. Tarama penceresinde (${esc(w.start||'03:00')}–${esc(w.end||'09:30')}) çalışır; hemen denemek için "Şimdi bir yayın tara".</div>`;
@@ -1977,10 +1980,84 @@ function renderDonut(items) {
 
 // ─── Video Detail ───
 function setActiveNav(active) {
-  ['navHome', 'navDash', 'navStatus'].forEach(n => {
+  ['navHome', 'navDash', 'navStatus', 'navArchive'].forEach(n => {
     const el = $(n);
     if (el) el.classList.toggle('active', n === active);
   });
+}
+
+// ─── Canlı Yayınlar (gece taramaları, güne göre) ───
+function goLiveArchive() {
+  stopLivePolling();
+  state.page = 'archive';
+  state.channelId = null; state.videoId = null;
+  setActiveNav('navArchive');
+  loadLiveArchive();
+}
+
+const _GUN = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+function _dayLabel(ymd) {
+  // ymd: "YYYY-MM-DD". Bugün/Dün etiketi + tarih.
+  const now = new Date();
+  const t = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const y = new Date(now.getTime() - 86400000);
+  const yt = `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,'0')}-${String(y.getDate()).padStart(2,'0')}`;
+  const parts = ymd.split('-');
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+  const pretty = `${parts[2]}.${parts[1]}.${parts[0]} · ${_GUN[d.getDay()]}`;
+  if (ymd === t) return 'Bugün · ' + pretty;
+  if (ymd === yt) return 'Dün · ' + pretty;
+  return pretty;
+}
+
+async function loadLiveArchive() {
+  let d;
+  try { d = await (await fetch('/api/live-archive')).json(); }
+  catch (e) { $('main').innerHTML = '<div class="empty-card">Yüklenemedi</div>'; return; }
+  const vids = d.videos || [];
+
+  let html = `<div class="page-header"><div>
+      <h1>Canlı Yayınlar</h1>
+      <div class="subtitle">Gece taramasının analiz ettiği canlı yayınlar · güne göre</div>
+    </div></div>`;
+
+  if (!vids.length) {
+    html += `<div class="empty-card">Henüz analiz edilmiş canlı yayın yok. Gece taraması (03:00–09:30) çalıştıkça burada güne göre listelenir.</div>`;
+    $('main').innerHTML = html;
+    return;
+  }
+
+  // Güne göre grupla (analyzed_at)
+  const groups = {};
+  for (const v of vids) {
+    const day = (v.analyzed_at || '').slice(0, 10) || 'bilinmiyor';
+    (groups[day] = groups[day] || []).push(v);
+  }
+  const days = Object.keys(groups).sort().reverse();
+
+  for (const day of days) {
+    const items = groups[day];
+    const totalAds = items.reduce((s, v) => s + (v.ad_frame_count || 0), 0);
+    html += `<div class="section">
+      <div class="section-head">
+        <div class="section-title-lg">${esc(_dayLabel(day))}</div>
+        <div class="report-meta">${items.length} yayın · ${totalAds} reklam</div>
+      </div>`;
+    html += items.map(v => {
+      const badge = v.ad_frame_count > 0
+        ? `<span class="video-ad-badge">${v.ad_frame_count} reklam</span>`
+        : `<span class="video-ad-badge zero">temiz</span>`;
+      return `<div class="lb-row" onclick="goVideo('${jsq(v.id)}')">
+        <img class="recent-thumb" style="width:72px;height:40px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
+        <div class="brand-vid-info" style="flex:1;min-width:0">
+          <div class="brand-vid-title">${esc(v.title)}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${esc((v.analyzed_at||'').slice(11,16))}</div>
+        </div>
+        ${badge}
+      </div>`;
+    }).join('') + `</div>`;
+  }
+  $('main').innerHTML = html;
 }
 
 // ─── Durum (Sistem Sağlığı & Tarama Geçmişi) ───

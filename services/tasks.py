@@ -323,18 +323,17 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
         last_scanned=datetime.utcnow().isoformat()
     )
 
-    from models.database import is_live_seen, mark_live_seen
+    from models.database import mark_live_seen
     added = 0
     for v in res["videos"]:
         if _cancelled(job_manager):     # "Tümünü Durdur" → kuyruğu doldurmayı bırak
             print("[KANAL-TARAMA] iptal edildi — kalan videolar eklenmedi")
             break
+        # MANUEL tarama: kullanıcı açıkça istedi → yalnız TAMAMLANMIŞ videoyu atla
+        # (gece taraması 'görüldü' demiş olsa bile bekleyen/başarısızı yeniden analiz et).
         if is_video_completed(v["id"]):
             continue
-        # Canlı yayın dedup: gece otomatik taraması ile çakışmayı önle
         is_live = bool(v.get("is_live")) or v.get("tab") in ("streams", "live")
-        if is_live and is_live_seen(v["id"]):
-            continue
         job_manager.add_video(
             v["url"],
             channel_id=channel_id,
