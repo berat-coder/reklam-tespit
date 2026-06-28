@@ -18,6 +18,7 @@ from config import (
     load_config, FRAMES_DIR,
     FRAME_INTERVAL, FRAME_WIDTH, BATCH_SIZE,
     SCENE_DIFF_THRESHOLD, LOWER_BAND_THRESHOLD,
+    TARGET_SAMPLE_FRAMES, MAX_API_FRAMES,
 )
 from services.gemini import gemini_analyze_batch, gemini_extract_brands
 from services.aggregates import compute_aggregates, suggest_channel_logos
@@ -249,6 +250,31 @@ def _select_candidates(frames_data):
         rep_of[i] = rep_idx
         prev_img = img
     return candidates, rep_of
+
+
+def _cap_candidates(candidate_indices, rep_of, max_n):
+    """Aday kare sayısını max_n'e indir (eşit aralıkla örnekle). Atılan adaylara
+    bağlı kareler en yakın TUTULAN adaya yeniden eşlenir → API isteği patlamaz.
+    ÜCRETSİZ KATMAN günlük kota (RPD) için kritik."""
+    import bisect
+    if not max_n or len(candidate_indices) <= max_n:
+        return candidate_indices, rep_of
+    n = len(candidate_indices)
+    step = n / float(max_n)
+    kept = sorted({candidate_indices[min(n - 1, int(i * step))] for i in range(max_n)})
+    kept_set = set(kept)
+
+    def _nearest(idx):
+        pos = bisect.bisect_left(kept, idx)
+        opts = []
+        if pos < len(kept):
+            opts.append(kept[pos])
+        if pos > 0:
+            opts.append(kept[pos - 1])
+        return min(opts, key=lambda c: abs(c - idx)) if opts else idx
+
+    new_rep = {i: (rep if rep in kept_set else _nearest(rep)) for i, rep in rep_of.items()}
+    return kept, new_rep
 
 
 # ── Kanal tarama ──────────────────────────────────────────────────────────────
@@ -528,7 +554,12 @@ def _analyze_video_core(
         return
 
     # 4. Frame çıkarımı — tek geçiş ffmpeg (yedek: opencv)
+    # Uzun videolarda aralığı artır → en fazla ~TARGET_SAMPLE_FRAMES kare çıksın
+    # (2.5 saatlik yayın 1100 kare yerine ~200). Süre yoksa (canlı) sabit aralık.
     interval = FRAME_INTERVAL
+    if duration and duration > 0 and TARGET_SAMPLE_FRAMES > 0:
+        interval = max(FRAME_INTERVAL,
+                       -(-int(duration) // TARGET_SAMPLE_FRAMES))  # ceil bölme
     job_frames_dir = FRAMES_DIR / video_id
     job_frames_dir.mkdir(exist_ok=True)
 
@@ -578,6 +609,8 @@ def _analyze_video_core(
 
     # 5. Sahne kümeleme + alt-bant yükseltici — sadece adayları Gemini'ye gönder
     candidate_indices, rep_of = _select_candidates(frames_data)
+    # Günlük kota güvenliği: aday sayısını sınırla (uzun yayında patlamasın)
+    candidate_indices, rep_of = _cap_candidates(candidate_indices, rep_of, MAX_API_FRAMES)
     candidate_set = set(candidate_indices)
     status(f"{total_frames} kare · {len(candidate_indices)} aday "
            f"(sahne+bant filtresi sonrası)")
@@ -634,8 +667,23 @@ def _analyze_video_core(
             "b64": _b64_file(frames_data[ci]["path"]),
         } for ci in chunk]
 
-        results.update(gemini_analyze_batch(api_key, batch_frames,
-                                            channel_logos, desc_brands))
+        batch_res = gemini_analyze_batch(api_key, batch_frames,
+                                          channel_logos, desc_brands)
+        # ── Günlük kota (RPD) doldu mu? Saatlerce 429 beklemek yerine HIZLI dur ──
+        if any((r or {}).get("ozet") == "QUOTA_DAILY" for r in batch_res.values()):
+            status("Gemini GÜNLÜK kota doldu — analiz durduruldu, yarın devam")
+            log_event("video", title or url, "error", "quota_daily",
+                      "Gemini günlük istek kotası (RPD) doldu")
+            mark_live_status(video_id, "pending", error="Gemini günlük kota doldu")
+            try:
+                from services.job_manager import _set_pause
+                _set_pause(6 * 3600)   # gece otomatik taramayı 6 saat duraklat
+            except Exception:
+                pass
+            on_set_live(status="error",
+                        message="Gemini günlük kota doldu — yarın devam eder", progress=0)
+            return
+        results.update(batch_res)
         api_calls += 1
         flush_ready()
 

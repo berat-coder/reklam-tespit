@@ -41,7 +41,12 @@ def gemini_call(api_key, payload, max_attempts=4, model=None, limiter=RATE_LIMIT
             if r.status_code == 200:
                 return r.json(), None
             if r.status_code == 429:
-                wait = 30 * (attempt + 1)   # 30 → 60 → 90 → 120 s
+                low = (r.text or "").lower()
+                # GÜNLÜK kota (RPD) → beklemek fayda etmez (gece yarısı PT resetlenir).
+                # Hızlı dön ki çağıran taramayı durdursun (saatlerce 429 bekleme yok).
+                if "perday" in low or "per day" in low or "requests per day" in low:
+                    return None, "QUOTA_DAILY"
+                wait = 20 * (attempt + 1)   # dakika-başı (RPM) → kısa bekle, tekrar dene
                 time.sleep(wait)
                 continue
             if r.status_code in (500, 502, 503, 504):

@@ -87,6 +87,14 @@ FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 300)
 # okur — yoksa canlı yayın sonsuza dek okunur, kuyruk tıkanır. Bitmiş yayınlar
 # (süresi bilinen) bundan etkilenmez; tüm VOD paralel seek ile çıkarılır.
 LIVE_SAMPLE_SECONDS = _int_env("LIVE_SAMPLE_SECONDS", 600)
+# Uzun videolarda kare patlamasını önle: süreye göre aralık ayarlanır, en fazla
+# bu kadar kare çıkarılır (2.5 saatlik yayın 1100 kare yerine ~bu kadar olur).
+TARGET_SAMPLE_FRAMES = _int_env("TARGET_SAMPLE_FRAMES", 200)
+# Gemini'ye gönderilecek MAKSİMUM kare (aday) sayısı — video ne kadar uzun olursa
+# olsun. ÜCRETSİZ KATMAN GÜNLÜK İSTEK (RPD ~500) darboğazı için kritik: 60 kare /
+# BATCH_SIZE(12) ≈ 5 istek/video → 30 video/gece ≈ 150 istek (kotanın altında).
+# Ücretli katmanda büyük ver (ör. 400) → tam kapsama.
+MAX_API_FRAMES = _int_env("MAX_API_FRAMES", 60)
 
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",
