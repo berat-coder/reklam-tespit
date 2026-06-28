@@ -71,11 +71,13 @@ def _discover(cfg, lookback, state):
     """Tüm kanallarda SON `lookback` saatteki canlı yayınları keşfet, yeni
     olanları live_seen'e işle. Her kanal için sonuç loglanır (Durum paneli)."""
     from services.youtube import fetch_live_streams, channel_id_from_url
+    from models.database import live_seen_ids
     channels = cfg.get("channels", [])
+    known = live_seen_ids()   # bilinenleri tek seferde al → tekrar tarih sorgusu yok
     new_count = 0
     for url in channels:
         try:
-            res = fetch_live_streams(url, last_hours=lookback)
+            res = fetch_live_streams(url, last_hours=lookback, known_ids=known)
         except Exception as e:
             print(f"[OTO-TARAMA] keşif hata ({url}): {e}")
             code, _ = _classify(str(e))

@@ -74,9 +74,10 @@ def _entry_ts(d):
         return 0
 
 
-def _resolve_video_date(url):
-    """Tek videonun gerçek yayın tarihini (epoch sn) çöz — flat tarih yoksa.
-    release_timestamp > timestamp > upload_date sırasıyla. Bulunamazsa None."""
+def _resolve_video_meta(url):
+    """Tek videonun gerçek (tarih, durum)'unu çöz — flat çıktı tarih/durum
+    vermediği için. Döner: (epoch_ts_or_None, live_status).
+    live_status: 'is_live' | 'is_upcoming' | 'was_live' | 'not_live' | 'error'."""
     try:
         with YoutubeDL(get_ydl_opts({
             "skip_download": True, "noplaylist": True,
@@ -85,33 +86,39 @@ def _resolve_video_date(url):
         })) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception:
-        return None
+        return None, "error"
     if not info:
-        return None
-    # Yaklaşan (henüz başlamamış) yayın → pencere dışı say (analiz edilmesin)
-    if info.get("live_status") == "is_upcoming":
-        return None
+        return None, "error"
+    status = info.get("live_status") or ("is_live" if info.get("is_live") else "not_live")
     ts = _entry_ts(info)
-    if ts:
-        return ts
-    ud = info.get("upload_date") or info.get("release_date")  # YYYYMMDD
-    if ud and len(str(ud)) == 8:
-        try:
-            import calendar
-            import time as _t
-            return int(calendar.timegm(_t.strptime(str(ud), "%Y%m%d")))
-        except Exception:
-            return None
-    return None
+    if not ts:
+        ud = info.get("upload_date") or info.get("release_date")  # YYYYMMDD
+        if ud and len(str(ud)) == 8:
+            try:
+                import calendar
+                import time as _t
+                ts = int(calendar.timegm(_t.strptime(str(ud), "%Y%m%d")))
+            except Exception:
+                ts = None
+    return ts, status
 
 
-def fetch_live_streams(channel_url, last_hours=24, max_resolve_per_channel=12):
-    """Scheduler keşfi: SADECE son `last_hours` saatteki canlı yayınlar.
-    /live (şu an canlı) + /streams (geçmiş yayınlar) sekmeleri taranır.
-    Bitmiş yayınların gerçek tarihi çözülür (flat tarih yoksa tek tek sorgu);
-    pencere dışındakiler ELENИR. YouTube en-yeniyi önce döndürdüğü için ilk
-    pencere-dışı yayında o sekme bırakılır (gereksiz sorgu yok)."""
+def fetch_live_streams(channel_url, last_hours=24, max_resolve_per_channel=20,
+                       known_ids=None):
+    """Bir kanalın SON `last_hours` saatteki canlı yayınları:
+    şu an YAYINDA olanlar + son 24s'te BİTMİŞ yayınlar. EN STABİL yol.
+
+    Neden böyle: yt-dlp'nin hızlı (flat) liste çıktısı tarih/durum VERMEZ —
+    her aday için tek tek video sorgusu (_resolve_video_meta) ile gerçek tarih+
+    durum çözülür. YouTube /streams listesi en-yeniyi önce verir AMA kanal en
+    üste eski bir yayın SABİTLEMİŞ olabilir; bu yüzden ilk eskide DEĞİL, ART
+    ARDA 3 eski yayın görünce dururuz (tek sabit eskiyi atlar, yakını kaçırmaz).
+    Maliyet `max_resolve_per_channel` ile, tekrar sorgu `known_ids` ile sınırlı.
+
+    known_ids: zaten bilinen video id'leri (scheduler verir) → tarih sorgusu
+    yapılmaz, atlanır (gece tekrarlı keşifte gereksiz sorguyu önler)."""
     import time
+    known_ids = known_ids or set()
     base_url = channel_url.rstrip("/")
     for suffix in ("/videos", "/streams", "/shorts", "/featured", "/community", "/live"):
         if base_url.endswith(suffix):
@@ -124,42 +131,49 @@ def fetch_live_streams(channel_url, last_hours=24, max_resolve_per_channel=12):
     channel_name = ""
     channel_avatar = ""
     resolved = 0
+    STREAK_OLD = 3   # art arda bu kadar eski yayın → dur
 
-    for tab_url, tab in ((base_url + "/live", "live"), (base_url + "/streams", "streams")):
-        try:
-            with YoutubeDL(get_ydl_opts({
-                "extract_flat": "in_playlist", "skip_download": True,
-                "playlistend": 15, "ignoreerrors": True, "socket_timeout": 15,
-                "extractor_args": {"youtube": {"player_client": ["web"]}},
-            })) as ydl:
-                info = ydl.extract_info(tab_url, download=False)
-        except Exception as e:
-            print(f"[CANLI-KEŞİF] {tab_url} → HATA: {e}")
-            continue
-        if not info:
-            continue
-        if not channel_name:
-            channel_name = (info.get("channel") or info.get("uploader")
-                            or info.get("title", "").split(" - ")[0])
-        if not channel_avatar:
-            channel_avatar = _pick_channel_avatar(info.get("thumbnails") or [])
-
-        # /live tek video dönebilir (şu an canlı) — playlist değil
-        if tab == "live" and info.get("id") and info.get("_type") != "playlist":
-            eid = info["id"]
-            if eid not in out:
+    # ── 1) Şu an canlı mı? /live sekmesi (kanonik kaynak) ──
+    try:
+        with YoutubeDL(get_ydl_opts({
+            "extract_flat": "in_playlist", "skip_download": True,
+            "playlistend": 3, "ignoreerrors": True, "socket_timeout": 15,
+            "extractor_args": {"youtube": {"player_client": ["web"]}},
+        })) as ydl:
+            linfo = ydl.extract_info(base_url + "/live", download=False)
+        if linfo:
+            channel_name = channel_name or linfo.get("channel") or linfo.get("uploader") or ""
+            channel_avatar = channel_avatar or _pick_channel_avatar(linfo.get("thumbnails") or [])
+            if linfo.get("id") and linfo.get("_type") != "playlist":
+                eid = linfo["id"]
                 out[eid] = {
                     "id": eid,
-                    "url": info.get("webpage_url") or f"https://www.youtube.com/watch?v={eid}",
-                    "title": info.get("title", "🔴 Canlı Yayın"),
+                    "url": linfo.get("webpage_url") or f"https://www.youtube.com/watch?v={eid}",
+                    "title": linfo.get("title", "🔴 Canlı Yayın"),
                     "duration": 0,
-                    "thumbnail": info.get("thumbnail") or f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg",
-                    "view_count": info.get("view_count", 0) or 0,
+                    "thumbnail": linfo.get("thumbnail") or f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg",
+                    "view_count": linfo.get("view_count", 0) or 0,
                     "tab": "live", "is_live": True, "timestamp": now,
                 }
-            continue
+    except Exception:
+        pass   # "not currently live" → normal
 
-        entries = info.get("entries", []) or []
+    # ── 2) /streams: geçmiş + (varsa) canlı yayınlar (en-yeni önce) ──
+    try:
+        with YoutubeDL(get_ydl_opts({
+            "extract_flat": "in_playlist", "skip_download": True,
+            "playlistend": 25, "ignoreerrors": True, "socket_timeout": 15,
+            "extractor_args": {"youtube": {"player_client": ["web"]}},
+        })) as ydl:
+            sinfo = ydl.extract_info(base_url + "/streams", download=False)
+    except Exception as e:
+        print(f"[CANLI-KEŞİF] {channel_url}/streams → HATA: {e}")
+        sinfo = None
+
+    if sinfo:
+        channel_name = channel_name or sinfo.get("channel") or sinfo.get("uploader") or ""
+        channel_avatar = channel_avatar or _pick_channel_avatar(sinfo.get("thumbnails") or [])
+        entries = sinfo.get("entries", []) or []
         flat = []
         for e in entries:
             if not e:
@@ -169,27 +183,39 @@ def fetch_live_streams(channel_url, last_hours=24, max_resolve_per_channel=12):
             else:
                 flat.append(e)
 
-        for entry in flat:  # YouTube en-yeniyi önce döndürür
+        consec_old = 0
+        for entry in flat:
             eid = entry.get("id")
             if not eid or eid in out:
                 continue
             _url = entry.get("url") or f"https://www.youtube.com/watch?v={eid}"
-            if "/shorts/" in _url or (entry.get("live_status") == "is_upcoming"):
+            if "/shorts/" in _url:
                 continue
-            is_live = bool(entry.get("is_live"))
+            if eid in known_ids:
+                continue   # zaten biliniyor → sorgu yapma, sayaçları etkileme
+            if resolved >= max_resolve_per_channel:
+                break
 
-            if is_live:
-                ts = now   # şu an yayında → pencerede
+            ts, status = _resolve_video_meta(
+                _url if _url.startswith("http") else f"https://www.youtube.com/watch?v={eid}")
+            resolved += 1
+
+            if status == "is_upcoming":
+                continue                      # yaklaşan → ele, eski sayma
+            if status == "error":
+                continue                      # özel/silinmiş/üyelere özel → atla
+            if status == "is_live":
+                ts = now                       # şu an yayında → pencerede
+                consec_old = 0
             else:
-                ts = _entry_ts(entry)
-                if not ts and resolved < max_resolve_per_channel:
-                    ts = _resolve_video_date(_url) or 0
-                    resolved += 1
-                if cutoff:
-                    if ts and ts < cutoff:
-                        break   # en-yeniyi önce → bu ve sonrası pencere dışı, dur
-                    if not ts:
-                        continue  # tarihi belirlenemeyen bitmiş yayın → sıkı: atla
+                if not ts:
+                    continue                   # tarihi belirlenemedi → atla
+                if cutoff and ts < cutoff:
+                    consec_old += 1
+                    if consec_old >= STREAK_OLD:
+                        break                  # art arda 3 eski → dur
+                    continue
+                consec_old = 0                 # pencere içi → sayacı sıfırla
 
             out[eid] = {
                 "id": eid,
@@ -198,7 +224,7 @@ def fetch_live_streams(channel_url, last_hours=24, max_resolve_per_channel=12):
                 "duration": entry.get("duration", 0) or 0,
                 "thumbnail": entry.get("thumbnail") or f"https://i.ytimg.com/vi/{eid}/hqdefault.jpg",
                 "view_count": entry.get("view_count", 0) or 0,
-                "tab": tab, "is_live": is_live, "timestamp": ts,
+                "tab": "streams", "is_live": (status == "is_live"), "timestamp": ts,
             }
 
     videos = sorted(out.values(), key=lambda v: v.get("timestamp") or 0, reverse=True)

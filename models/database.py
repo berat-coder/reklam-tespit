@@ -225,6 +225,13 @@ def mark_live_status(video_id, status, error="", inc_attempt=False):
             """, (status, error or "", analyzed, video_id))
 
 
+def live_seen_ids():
+    """Bilinen tüm canlı yayın id'leri (keşifte tekrar tarih sorgusunu önlemek için)."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT video_id FROM live_seen").fetchall()
+        return {r["video_id"] for r in rows}
+
+
 def list_live_seen(since=None, limit=50):
     """Son görülen canlı yayınlar (panel için). since: ISO tarih filtresi."""
     with get_db() as conn:
