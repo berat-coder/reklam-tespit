@@ -659,6 +659,43 @@ body.viewer .admin-only { display: none !important; }
   .channel-grid, .video-list { grid-template-columns: 1fr !important; }
   .det-grid, .stat-tiles { grid-template-columns: repeat(2, 1fr) !important; }
 }
+
+/* ── Otomatik KOYU tema (cihaz koyu moddaysa) ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1015; --bg2: #161922; --bg3: #1d212c; --bg4: #2a3040;
+    --surface: #161922; --border: #262b38; --border2: #353c4d;
+    --text: #e9ebf2; --dim: #9aa3b6; --dimmer: #6b7384;
+    --accent: #818cf8; --accent2: #6f7bf7; --accent-soft: rgba(129,140,248,0.16);
+    --accent-grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    --green: #34d399; --amber: #fbbf24; --red: #f87171; --blue: #60a5fa; --purple: #a78bfa;
+    --shadow: 0 1px 2px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.35);
+    --shadow-lg: 0 10px 28px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+  }
+  /* koyu modda görseller biraz yumuşasın */
+  .video-thumb, .det-thumb, .recent-thumb, .bframe img { filter: brightness(.92); }
+}
+
+/* ── Mobil alt sekme menüsü (telefonda birincil navigasyon) ── */
+.bottom-nav { display: none; }
+@media (max-width: 800px) {
+  .bottom-nav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 70;
+    background: var(--bg2); border-top: 1px solid var(--border);
+    padding: 5px 2px calc(5px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -2px 12px rgba(0,0,0,.10);
+  }
+  .bn-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: none; border: none; color: var(--dim); font-size: 10px;
+    font-family: inherit; cursor: pointer; padding: 5px 2px; min-height: 50px;
+    justify-content: center; border-radius: 10px;
+  }
+  .bn-item .ti { font-size: 21px; }
+  .bn-item.active { color: var(--accent); }
+  .bn-item.active .ti { transform: translateY(-1px); }
+  .main { padding-bottom: 78px !important; }
+}
 </style>
 </head>
 <body>
@@ -813,6 +850,14 @@ body.viewer .admin-only { display: none !important; }
   </div>
 </div>
 
+<nav class="bottom-nav" id="bottomNav">
+  <button class="bn-item active" data-seg="" onclick="goHome()"><i class="ti ti-home"></i>Kanallar</button>
+  <button class="bn-item" data-seg="canli" onclick="goLiveArchive()"><i class="ti ti-broadcast"></i>Canlı</button>
+  <button class="bn-item" data-seg="panel" onclick="goDashboard()"><i class="ti ti-chart-bar"></i>Panel</button>
+  <button class="bn-item" data-seg="durum" onclick="goStatus()"><i class="ti ti-activity-heartbeat"></i>Durum</button>
+  <button class="bn-item" data-seg="menu" onclick="toggleSidebar(true)"><i class="ti ti-menu-2"></i>Menü</button>
+</nav>
+
 <div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
   <div class="modal-content">
     <button class="modal-close" onclick="closeModal()">×</button>
@@ -888,7 +933,7 @@ function toggleSidebar(force) {
 window.addEventListener('DOMContentLoaded', async () => {
   await loadMe();
   await refreshKey();
-  goHome();
+  renderRoute();   // mevcut hash'i çiz (deep-link/yenileme korunur; boşsa ana sayfa)
   pollQueue();
   loadRecentSidebar();
   loadHealth();
@@ -2919,6 +2964,61 @@ function fmtDur(s) {
 function esc(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  HASH ROUTER — tarayıcı GERİ tuşu uygulama içinde çalışsın (siteden atmasın)
+//  Aşağıdaki go*/open* tanımları yukarıdakileri GEÇERSİZ kılar (son tanım kazanır):
+//  artık sayfa geçişi yapmazlar, sadece location.hash'i değiştirirler. hashchange
+//  → renderRoute() asıl çizimi yapar. Böylece geri/ileri tuşları native çalışır.
+// ════════════════════════════════════════════════════════════════════════
+function navTo(h) {
+  closeMobileMenu();
+  if (location.hash === h) renderRoute();   // aynı hash → elle yeniden çiz
+  else location.hash = h;                   // değişiklik → hashchange tetikler
+}
+function goHome()          { navTo('#/'); }
+function goDashboard()     { navTo('#/panel'); }
+function goLiveArchive()   { navTo('#/canli'); }
+function goStatus()        { navTo('#/durum'); }
+function goAnalyses()      { navTo('#/analizler'); }
+function goChannel(id)     { navTo('#/kanal/' + encodeURIComponent(id)); }
+function goVideo(id)       { navTo('#/video/' + encodeURIComponent(id)); }
+function openBrand(name)   { navTo('#/marka/' + encodeURIComponent(name)); }
+function goBrowse(id)      { navTo('#/sec/' + encodeURIComponent(id)); }
+function goLive(id)        { navTo('#/izle' + (id ? '/' + encodeURIComponent(id) : '')); }
+
+function renderRoute() {
+  stopLivePolling();
+  const raw = (location.hash || '#/').replace(/^#\/?/, '');   // 'video/xyz'
+  const parts = raw.split('/').filter(s => s.length);
+  const seg = parts[0] || '';
+  const arg = parts[1] ? decodeURIComponent(parts[1]) : null;
+  state.channelId = null; state.videoId = null;
+
+  if (seg === '' || seg === 'home') { state.page = 'home'; setActiveNav('navHome'); loadHome(); loadRecentSidebar(); }
+  else if (seg === 'panel')     { state.page = 'dashboard'; setActiveNav('navDash'); loadDashboard(); }
+  else if (seg === 'canli')     { state.page = 'archive'; setActiveNav('navArchive'); loadLiveArchive(); }
+  else if (seg === 'durum')     { state.page = 'status'; setActiveNav('navStatus'); loadStatus(); }
+  else if (seg === 'analizler') { state.page = 'analyses'; setActiveNav(null); loadAnalyses(); }
+  else if (seg === 'kanal' && arg) { state.page = 'channel'; state.channelId = arg; setActiveNav(null); loadChannel(arg); }
+  else if (seg === 'video' && arg) { state.page = 'video'; state.videoId = arg; state.filter = 'all'; setActiveNav(null); loadVideo(arg); }
+  else if (seg === 'marka' && arg) { state.page = 'brand'; state.brand = arg; setActiveNav(null); loadBrandDetail(arg); }
+  else if (seg === 'sec' && arg)   { state.page = 'browse'; state.channelId = arg; setActiveNav(null); loadBrowse(arg); }
+  else if (seg === 'izle')      { state.page = 'live'; state.channelId = arg || null; _liveBuilt = false; _liveLastDetCount = -1; _liveWaitCount = 0; setActiveNav(null); startLivePolling(); }
+  else { state.page = 'home'; setActiveNav('navHome'); loadHome(); }
+
+  _syncBottomNav(seg);
+  try { window.scrollTo(0, 0); } catch (e) {}
+}
+window.addEventListener('hashchange', renderRoute);
+
+function closeMobileMenu() { try { toggleSidebar(false); } catch (e) {} }
+function _syncBottomNav(seg) {
+  const map = { '': '', 'home': '', 'canli': 'canli', 'panel': 'panel', 'durum': 'durum' };
+  const active = map.hasOwnProperty(seg) ? map[seg] : null;
+  document.querySelectorAll('.bn-item').forEach(b =>
+    b.classList.toggle('active', active !== null && b.dataset.seg === active));
 }
 </script>
 </body>

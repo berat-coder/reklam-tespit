@@ -1,9 +1,13 @@
 import os
 import json
 from pathlib import Path
-from dotenv import load_dotenv
 
-load_dotenv()
+# .env yükleme — python-dotenv yoksa (ör. bazı yerel python'lar) sessizce atla.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 BASE_DIR = Path(__file__).parent
 # Kalıcı veri dizini (data.db, config.json) — Docker volume (DATA_DIR ile override).
