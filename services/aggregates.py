@@ -41,6 +41,25 @@ def _norm_key(s):
     return _norm(s).casefold()
 
 
+# Global spor-kulüp/lig ayıklama listesi (config'ten, 30s cache). Kulüp armaları
+# (Fenerbahçe, Bayern, UEFA…) reklam sayılmasın diye. UI'dan düzenlenebilir.
+_GLOBAL_IGNORE_CACHE = {"ts": 0.0, "keys": frozenset()}
+
+
+def _global_ignore_keys():
+    import time
+    now = time.time()
+    if now - _GLOBAL_IGNORE_CACHE["ts"] > 30:
+        try:
+            from config import load_config
+            lst = load_config().get("global_ignored_brands") or []
+        except Exception:
+            lst = []
+        _GLOBAL_IGNORE_CACHE["keys"] = frozenset(_norm_key(x) for x in lst if x)
+        _GLOBAL_IGNORE_CACHE["ts"] = now
+    return _GLOBAL_IGNORE_CACHE["keys"]
+
+
 # "Pasif" türler: markanın sadece sürekli köşe logosu/arka plan olarak bulunması.
 # active_only işaretli ana sponsorlarda bunlar reklam sayılmaz.
 _PASSIVE_TURS = {"Köşe Banner", "Arka Plan", "Reklam"}
@@ -75,6 +94,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     sponsor_keys = {_norm_key(s) for s in (main_sponsors or []) if s}
     active_only_keys = {_norm_key(s) for s in (active_only or []) if s}
     ignored_keys = {_norm_key(i) for i in (ignored_brands or []) if i}
+    ignored_keys |= _global_ignore_keys()      # kulüp arması/lig/milli takım → reklam değil
     excluded_keys = logo_keys | ignored_keys  # ad sayımından düşenler
     total = len(detections)
 

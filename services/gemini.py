@@ -183,9 +183,16 @@ def _detection_rules(channel_logos):
 
 🚫 REKLAM SAYMA:
 - Kanalın kendi logosu (kanal logosu listesi: {logos})
-- Program/yayın adı bandı
-- Konuşmacı/misafir isim tagi
-- Sosyal medya hesabı tagi
+- FUTBOL KULÜBÜ ARMASI / TAKIM LOGOSU (ör. Fenerbahçe, Galatasaray, Beşiktaş,
+  Bayern, Real Madrid) — bunlar kulüp KİMLİĞİdir, REKLAM DEĞİL
+- Lig / turnuva / federasyon logoları (UEFA, FIFA, TFF, Süper Lig, Şampiyonlar Ligi)
+- Milli takım / ülke armaları, forma numarası/oyuncu adı
+- Program/yayın adı bandı, sunucu/misafir isim tagi, sosyal medya tagi
+
+⚽ ÇOK ÖNEMLİ (spor yayını): Oyuncu formasının/şortunun üzerindeki SPONSOR
+markası (bahis sitesi, banka, telekom, içecek, giyim markası vb.) VEYA saha
+kenarı/LED reklam panosu = REKLAMDIR, mutlaka yaz. Kulüp armasıyla forma
+sponsorunu KARIŞTIRMA: arma=hayır, formadaki şirket markası=evet.
 
 🔥 KRİTİK:
 - Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et

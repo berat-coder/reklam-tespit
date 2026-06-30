@@ -49,6 +49,9 @@ def config_endpoint():
             cfg["gemini_api_key"] = data["gemini_api_key"]
         if "channels" in data:
             cfg["channels"] = data["channels"]
+        if "global_ignored_brands" in data and isinstance(data["global_ignored_brands"], list):
+            cfg["global_ignored_brands"] = [str(x).strip() for x in data["global_ignored_brands"]
+                                            if str(x).strip()]
         save_config(cfg)
         return jsonify({"ok": True})
     cfg = load_config()
@@ -57,6 +60,7 @@ def config_endpoint():
         "has_key": bool(key),
         "key_preview": (key[:8] + "..." + key[-4:]) if len(key) > 12 else "",
         "channels": cfg.get("channels", []),
+        "global_ignored_brands": cfg.get("global_ignored_brands", []),
     })
 
 

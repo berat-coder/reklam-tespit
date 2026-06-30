@@ -708,6 +708,16 @@ body.viewer .admin-only { display: none !important; }
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-shield-off" style="color:var(--accent)"></i> Reklam Sayılmayacaklar (Kulüp / Lig)
+      </div>
+      <div class="setup-desc">Kulüp armaları (Fenerbahçe, Bayern…), lig/federasyon/milli takım logoları reklam sayılmaz. Forma/saha <strong>SPONSOR</strong> markaları (bahis, banka, telekom) yine reklam sayılır. Her satıra bir ad.</div>
+      <textarea id="ignoreList" class="setup-input" placeholder="Fenerbahçe&#10;Galatasaray&#10;UEFA&#10;..." style="font-family:inherit;min-height:120px;resize:vertical"></textarea>
+      <button class="btn primary full" onclick="saveIgnoreList()" style="margin-top:8px"><i class="ti ti-device-floppy"></i> Listeyi Kaydet</button>
+      <div style="font-size:11px;color:var(--dimmer);margin-top:8px">Not: Mevcut analizlere uygulamak için "Şişik Veriyi Düzelt"e bas (hepsini yeniden hesaplar).</div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
       <div class="setup-title" style="font-size:15px">👤 Kullanıcılar & Roller</div>
       <div class="setup-desc"><strong>Yönetici</strong> her şeyi değiştirebilir. <strong>Görüntüleyici</strong> yalnızca görür — tarama, silme, düzenleme yapamaz. Ana hesap her zaman yöneticidir.</div>
       <div id="userList" style="margin-bottom:12px"></div>
@@ -906,6 +916,7 @@ function openSetup(section) {
   $('setupOv').style.display = 'flex';
   loadUsers();
   loadAutoScanSettings();
+  loadIgnoreList();
   if (section === 'autoscan') {
     setTimeout(() => { const el = $('autoscanSettings'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
   } else {
@@ -913,6 +924,27 @@ function openSetup(section) {
   }
 }
 function closeSetup() { $('setupOv').style.display = 'none'; }
+
+async function loadIgnoreList() {
+  const ta = $('ignoreList');
+  if (!ta) return;
+  try {
+    const d = await (await fetch('/api/config')).json();
+    ta.value = (d.global_ignored_brands || []).join('\n');
+  } catch (e) {}
+}
+
+async function saveIgnoreList() {
+  const ta = $('ignoreList');
+  if (!ta) return;
+  const list = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+  const d = await (await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({global_ignored_brands: list})
+  })).json();
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+  toast(`${list.length} ad kaydedildi (reklam sayılmayacak)`, 'success');
+}
 
 async function loadAutoScanSettings() {
   try {

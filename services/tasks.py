@@ -630,7 +630,10 @@ def _analyze_video_core(
             rep = rep_of[fd["index"]]
             if rep not in results:
                 break
-            res = results[rep]
+            # YALNIZ gerçekten Gemini'ye gönderilen (aday) kare reklam taşır.
+            # Aday olmayan komşu kareler MİRAS ALMAZ → "8 karede var ama 2'sinde
+            # gerçek" sorunu biter; gösterilen her kare gerçekten incelenmiştir.
+            res = results[rep] if fd["index"] in candidate_set else {}
 
             filtered = []
             for t in res.get("tespitler", []):

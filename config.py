@@ -96,6 +96,28 @@ TARGET_SAMPLE_FRAMES = _int_env("TARGET_SAMPLE_FRAMES", 200)
 # Ücretli katmanda büyük ver (ör. 400) → tam kapsama.
 MAX_API_FRAMES = _int_env("MAX_API_FRAMES", 60)
 
+# Spor yayınlarında REKLAM SAYILMAYACAK kulüp/lig/federasyon/milli takım adları.
+# Forma/saha SPONSOR markaları (bahis, banka, telekom) bundan etkilenmez — onlar
+# reklamdır. Bu liste yalnız kulüp KİMLİĞİ (arma/isim) için. UI'dan düzenlenebilir.
+DEFAULT_SPORTS_IGNORE = [
+    # Türkiye — Süper Lig ve büyükler
+    "Fenerbahçe", "Galatasaray", "Beşiktaş", "Trabzonspor", "Başakşehir",
+    "Adana Demirspor", "Konyaspor", "Antalyaspor", "Kayserispor", "Sivasspor",
+    "Alanyaspor", "Gaziantep FK", "Kasımpaşa", "Hatayspor", "Samsunspor",
+    "Rizespor", "Çaykur Rizespor", "Pendikspor", "Ankaragücü", "İstanbulspor",
+    "Bodrumspor", "Eyüpspor", "Göztepe", "Kocaelispor", "Bursaspor",
+    # Avrupa büyükleri
+    "Real Madrid", "Barcelona", "Atletico Madrid", "Bayern", "Bayern Münih",
+    "Borussia Dortmund", "Manchester City", "Manchester United", "Liverpool",
+    "Arsenal", "Chelsea", "Tottenham", "Juventus", "Inter", "Milan", "Napoli",
+    "PSG", "Paris Saint-Germain", "Ajax", "Benfica", "Porto",
+    # Lig / turnuva / federasyon
+    "UEFA", "FIFA", "TFF", "Süper Lig", "Trendyol Süper Lig", "Şampiyonlar Ligi",
+    "Champions League", "Avrupa Ligi", "Europa League", "Konferans Ligi",
+    "Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1",
+    "Dünya Kupası", "World Cup", "EURO", "Milli Takım", "A Milli Takım",
+]
+
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",
     "https://www.youtube.com/@eskiacikonline",
@@ -144,6 +166,7 @@ def load_config():
         "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
         "channels": list(DEFAULT_CHANNELS),
         "auto_scan": dict(DEFAULT_AUTO_SCAN),
+        "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır
     if _CONFIG_FILE.exists():
@@ -154,6 +177,8 @@ def load_config():
             if saved.get("channels"):
                 cfg["channels"] = saved["channels"]
             cfg["auto_scan"] = _merge_auto_scan(saved.get("auto_scan"))
+            if saved.get("global_ignored_brands") is not None:
+                cfg["global_ignored_brands"] = saved["global_ignored_brands"]
         except Exception:
             pass
     return cfg
