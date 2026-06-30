@@ -83,10 +83,10 @@ LOWER_BAND_THRESHOLD = _float_env("LOWER_BAND_THRESHOLD", 0.06)
 AUTO_SPONSOR_THRESHOLD = _int_env("AUTO_SPONSOR_THRESHOLD", 70)
 # Shorts atlama: süresi 1..bu değer (sn) arası olan videolar Shorts sayılıp atlanır
 SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
-# Frame depolama üst sınırı (MB). Toplam frame boyutu bunu aşarsa en eski video
-# klasörleri otomatik silinir (volume dolmasın). Yalnız kanıt kareleri saklandığı
-# için bu sınıra ulaşmak zordur; yine de güvenlik için.
-FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 300)
+# Frame depolama üst sınırı (MB). Tüm kareler saklanır; toplam boyut bunu aşarsa
+# EN ESKİ video klasörleri otomatik silinir (volume dolmasın). 500MB volume için
+# 450 → onlarca güncel video görüntülenebilir, eskiler budanır.
+FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 450)
 # Süresi BİLİNMEYEN (şu an canlı) yayında lineer ffmpeg en fazla bu kadar saniye
 # okur — yoksa canlı yayın sonsuza dek okunur, kuyruk tıkanır. Bitmiş yayınlar
 # (süresi bilinen) bundan etkilenmez; tüm VOD paralel seek ile çıkarılır.

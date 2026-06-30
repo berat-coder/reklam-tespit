@@ -734,19 +734,15 @@ def _analyze_video_core(
         completed=True,
     )
 
-    # ── Kanıt-kare temizliği: yalnız reklam karelerini diskte tut (kalıcı, az yer) ──
-    keep = {d["frame_url"].rsplit("/", 1)[-1] for d in detections
-            if d.get("reklam_var") and d.get("frame_url")}
-    for d in detections:
-        if not d.get("reklam_var"):
-            d["frame_url"] = ""   # temiz kare diskten silinecek → kırık görsel olmasın
+    # TÜM kareler diskte kalır (kullanıcı temiz kareleri de inceleyebilsin —
+    # komşu karelere bakarak doğrulama yapıyor). Yer sınırı yalnızca cap aşılınca
+    # EN ESKİ video klasörlerini budayarak yönetilir (kanıt-kare silme YOK).
     try:
-        from services.storage import keep_only_evidence_frames, prune_frames
+        from services.storage import prune_frames
         from config import FRAME_STORAGE_CAP_MB
-        keep_only_evidence_frames(video_id, keep)
         prune_frames(FRAME_STORAGE_CAP_MB)
     except Exception as e:
-        print(f"[FRAME] temizlik atlandı: {e}")
+        print(f"[FRAME] budama atlandı: {e}")
 
     save_detections(video_id, detections)
 
