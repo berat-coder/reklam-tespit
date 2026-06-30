@@ -174,25 +174,31 @@ def _detection_rules(channel_logos):
 ✅ REKLAM SAYILAN (bunlardan HERHANGİ BİRİ varsa reklam_var=true):
 - YouTube pre-roll / mid-roll reklam ekranı (tam ekran reklam, atla butonu, sayaç)
 - Reklam geçiş karesi (siyah, kırmızı, beyaz vs düz renk ekran — reklam arası)
-- Görüntünün herhangi bir köşesinde / kenarında reklam overlay'i, banner
+- Görüntünün köşesinde/kenarında YAYINA EKLENMİŞ reklam overlay'i, banner
 - Alt bant'ta marka logosu/sloganı/kampanya yazısı
 - Sponsor bandı, indirim kodu, "tıkla"/"satın al"/"kod ile indirim" yazıları
 - Bahis, oyun, bonus, hoşgeldin paketi reklamları
-- Konuşmacının elinde/yanında kasıtlı tuttuğu markalı ürün
-- Arka plan reklam panoları veya logo
+- ANİDEN BELİREN / hareketli / animasyonlu pop-up reklamlar
+- Stüdyoda/masada/ekranda KASITLI YERLEŞTİRİLMİŞ sponsor logosu veya ürün
+  (ürün yerleştirme) — konuşmacının elinde tuttuğu markalı ürün dahil
+- Saha kenarı / LED reklam panoları, sahaya boyanmış reklam
 
 🚫 REKLAM SAYMA:
 - Kanalın kendi logosu (kanal logosu listesi: {logos})
-- FUTBOL KULÜBÜ ARMASI / TAKIM LOGOSU (ör. Fenerbahçe, Galatasaray, Beşiktaş,
-  Bayern, Real Madrid) — bunlar kulüp KİMLİĞİdir, REKLAM DEĞİL
+- ⚽ OYUNCUNUN GİYDİĞİ formanın/şortun/çorabın üzerindeki SPONSOR markası
+  (forma göğüs/kol sponsoru) — bu maç görüntüsünde sürekli ekranda olur, REKLAM
+  SAYMA. (Yazman gerekiyorsa SADECE tespit olarak tur="Forma" ver, "markalar"
+  dizisine EKLEME.)
+- FUTBOL KULÜBÜ ARMASI / TAKIM LOGOSU (Fenerbahçe, Galatasaray, Bayern, Real
+  Madrid…) — kulüp kimliği, REKLAM DEĞİL
 - Lig / turnuva / federasyon logoları (UEFA, FIFA, TFF, Süper Lig, Şampiyonlar Ligi)
 - Milli takım / ülke armaları, forma numarası/oyuncu adı
 - Program/yayın adı bandı, sunucu/misafir isim tagi, sosyal medya tagi
 
-⚽ ÇOK ÖNEMLİ (spor yayını): Oyuncu formasının/şortunun üzerindeki SPONSOR
-markası (bahis sitesi, banka, telekom, içecek, giyim markası vb.) VEYA saha
-kenarı/LED reklam panosu = REKLAMDIR, mutlaka yaz. Kulüp armasıyla forma
-sponsorunu KARIŞTIRMA: arma=hayır, formadaki şirket markası=evet.
+⚽ KRİTİK AYRIM: GİYİLEN forma üzerindeki sponsor = HAYIR (sayma). Ama saha kenarı
+LED panosu, yayına eklenen overlay/alt bant, tam ekran reklam, aniden çıkan
+hareketli reklam, stüdyoda/masada yerleştirilmiş sponsor = EVET (yaz). Yani
+"oyuncunun ÜZERİNDE giydiği" ≠ "sahneye/yayına YERLEŞTİRİLMİŞ".
 
 🔥 KRİTİK:
 - Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et
@@ -206,8 +212,10 @@ sponsorunu KARIŞTIRMA: arma=hayır, formadaki şirket markası=evet.
 - "tur" alanına SADECE ŞU LİSTEDEN TEK BİR kelime yaz — birden fazla yazma,
   eğik çizgi (/) kullanma, parantez/açıklama EKLEME:
   "Pre-Roll" | "Mid-Roll" | "Video Reklam" | "Alt Bant" | "Köşe Banner" |
-  "Sponsor Bandı" | "Ürün Yerleştirme" | "Geçiş Karesi" | "Arka Plan"
-- "markalar" dizisine karedeki TÜM reklam markalarını yaz (kanal logosu hariç)"""
+  "Sponsor Bandı" | "Ürün Yerleştirme" | "Geçiş Karesi" | "Arka Plan" | "Forma"
+  ("Forma" = oyuncunun giydiği forma sponsoru — reklam sayılmaz, sadece kayıt için)
+- "markalar" dizisine karedeki TÜM reklam markalarını yaz — ANCAK kanal logosu,
+  kulüp arması ve OYUNCU FORMASI sponsorunu bu diziye EKLEME"""
 
 
 # Batch JSON çıktısının yapısal şeması — drift/parse hatalarını azaltır

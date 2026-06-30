@@ -122,6 +122,11 @@ DEFAULT_SPORTS_IGNORE = [
     "Dünya Kupası", "World Cup", "EURO", "Milli Takım", "A Milli Takım",
 ]
 
+# Reklam SAYILMAYACAK yerleşimler (placement). Varsayılan: oyuncunun giydiği
+# forma/kit üzerindeki sponsor. Overlay/tam-ekran/ürün-yerleştirme/LED sayılır.
+# UI'dan düzenlenebilir; ileride stüdyo dekoru/stat tabelası da eklenebilir.
+DEFAULT_EXCLUDED_PLACEMENTS = ["Forma"]
+
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",
     "https://www.youtube.com/@eskiacikonline",
@@ -171,6 +176,7 @@ def load_config():
         "channels": list(DEFAULT_CHANNELS),
         "auto_scan": dict(DEFAULT_AUTO_SCAN),
         "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
+        "excluded_placements": list(DEFAULT_EXCLUDED_PLACEMENTS),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır
     if _CONFIG_FILE.exists():
@@ -183,6 +189,8 @@ def load_config():
             cfg["auto_scan"] = _merge_auto_scan(saved.get("auto_scan"))
             if saved.get("global_ignored_brands") is not None:
                 cfg["global_ignored_brands"] = saved["global_ignored_brands"]
+            if saved.get("excluded_placements") is not None:
+                cfg["excluded_placements"] = saved["excluded_placements"]
         except Exception:
             pass
     return cfg

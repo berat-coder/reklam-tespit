@@ -755,6 +755,16 @@ body.viewer .admin-only { display: none !important; }
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-ad-off" style="color:var(--accent)"></i> Reklam Sayılmayacak Yerleşimler
+      </div>
+      <div class="setup-desc">İşaretlediğin yerleşimdeki markalar reklam sayılmaz. <strong>Forma</strong> = oyuncunun giydiği forma sponsoru (maçta sürekli ekranda — önerilen: işaretli). Overlay/alt bant/tam ekran/ürün yerleştirme zaten reklam sayılır.</div>
+      <div id="placementBoxes" style="display:flex;flex-direction:column;gap:10px;margin-top:6px"></div>
+      <button class="btn primary full" onclick="savePlacements()" style="margin-top:10px"><i class="ti ti-device-floppy"></i> Yerleşim Ayarını Kaydet</button>
+      <div style="font-size:11px;color:var(--dimmer);margin-top:8px">Sadece yeni analizleri etkiler; mevcut için video silinip yeniden taranır.</div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
       <div class="setup-title" style="font-size:15px">👤 Kullanıcılar & Roller</div>
       <div class="setup-desc"><strong>Yönetici</strong> her şeyi değiştirebilir. <strong>Görüntüleyici</strong> yalnızca görür — tarama, silme, düzenleme yapamaz. Ana hesap her zaman yöneticidir.</div>
       <div id="userList" style="margin-bottom:12px"></div>
@@ -962,6 +972,7 @@ function openSetup(section) {
   loadUsers();
   loadAutoScanSettings();
   loadIgnoreList();
+  loadPlacements();
   if (section === 'autoscan') {
     setTimeout(() => { const el = $('autoscanSettings'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
   } else {
@@ -989,6 +1000,37 @@ async function saveIgnoreList() {
   })).json();
   if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
   toast(`${list.length} ad kaydedildi (reklam sayılmayacak)`, 'success');
+}
+
+const _PLACEMENTS = [
+  {v: 'Forma', l: 'Forma sponsoru (oyuncunun giydiği forma/şort markası)'},
+  {v: 'Arka Plan', l: 'Arka plan / sabit tabela'},
+  {v: 'Köşe Banner', l: 'Köşe logosu / köşe banner'},
+  {v: 'Ürün Yerleştirme', l: 'Ürün yerleştirme (masada/elde marka)'},
+];
+async function loadPlacements() {
+  const box = $('placementBoxes');
+  if (!box) return;
+  let excluded = ['Forma'];
+  try {
+    const d = await (await fetch('/api/config')).json();
+    if (Array.isArray(d.excluded_placements)) excluded = d.excluded_placements;
+  } catch (e) {}
+  box.innerHTML = _PLACEMENTS.map(p => `
+    <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="pl-box" value="${esc(p.v)}" ${excluded.includes(p.v) ? 'checked' : ''}
+        style="width:16px;height:16px;accent-color:var(--accent)">
+      ${esc(p.l)}
+    </label>`).join('');
+}
+async function savePlacements() {
+  const list = [...document.querySelectorAll('.pl-box:checked')].map(b => b.value);
+  const d = await (await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({excluded_placements: list})
+  })).json();
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+  toast('Yerleşim ayarı kaydedildi', 'success');
 }
 
 async function loadAutoScanSettings() {

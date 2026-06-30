@@ -12,6 +12,9 @@ _GUVEN_RANK = {"yüksek": 3, "orta": 2, "düşük": 1}
 # Model bazen tür alanına cümle/birleşik değer yazıyor; temiz kategoriye eşle.
 # Sıra önemli — ilk eşleşen kazanır.
 _TUR_CANON = [
+    # Yerleşim: oyuncunun GİYDİĞİ forma/kit sponsoru (varsayılan reklam sayılmaz)
+    ("forma", "Forma"), ("jersey", "Forma"), ("kit", "Forma"), ("mayo", "Forma"),
+    ("formanın", "Forma"), ("oyuncu üz", "Forma"),
     ("pre-roll", "Pre-Roll"), ("pre roll", "Pre-Roll"),
     ("mid-roll", "Mid-Roll"), ("mid roll", "Mid-Roll"),
     ("video reklam", "Video Reklam"),
@@ -60,6 +63,27 @@ def _global_ignore_keys():
     return _GLOBAL_IGNORE_CACHE["keys"]
 
 
+# Reklam SAYILMAYACAK yerleşimler (kanonik tür), config'ten 30s cache.
+# Varsayılan {"Forma"} — oyuncunun giydiği forma sponsoru sayılmaz.
+_EXCLUDED_PL_CACHE = {"ts": 0.0, "set": frozenset({"Forma"})}
+
+
+def _excluded_placements():
+    import time
+    now = time.time()
+    if now - _EXCLUDED_PL_CACHE["ts"] > 30:
+        try:
+            from config import load_config, DEFAULT_EXCLUDED_PLACEMENTS
+            lst = load_config().get("excluded_placements")
+            if lst is None:
+                lst = DEFAULT_EXCLUDED_PLACEMENTS
+        except Exception:
+            lst = ["Forma"]
+        _EXCLUDED_PL_CACHE["set"] = frozenset(_canonical_tur(x) for x in lst if x)
+        _EXCLUDED_PL_CACHE["ts"] = now
+    return _EXCLUDED_PL_CACHE["set"]
+
+
 # "Pasif" türler: markanın sadece sürekli köşe logosu/arka plan olarak bulunması.
 # active_only işaretli ana sponsorlarda bunlar reklam sayılmaz.
 _PASSIVE_TURS = {"Köşe Banner", "Arka Plan", "Reklam"}
@@ -96,6 +120,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     ignored_keys = {_norm_key(i) for i in (ignored_brands or []) if i}
     ignored_keys |= _global_ignore_keys()      # kulüp arması/lig/milli takım → reklam değil
     excluded_keys = logo_keys | ignored_keys  # ad sayımından düşenler
+    excluded_pl = _excluded_placements()       # reklam sayılmayan yerleşimler (ör. Forma)
     total = len(detections)
 
     type_counts = {}
@@ -153,6 +178,8 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             else:
                 konum0 = _norm(ad_tespitler[0].get("konum", "")) if ad_tespitler else ""
                 pairs = [(rep_tur, konum0)]
+            # Yerleşim eleme: forma vb. dışlanan yerleşimler reklam sayılmaz
+            pairs = [(t, k) for (t, k) in pairs if t not in excluded_pl]
             # active_only: pasif (köşe logosu/arka plan/genel) görünümleri ele
             if bk in active_only_keys:
                 pairs = [(t, k) for (t, k) in pairs if t not in _PASSIVE_TURS]
@@ -161,7 +188,9 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
 
         # Markasız ama aktif türde reklam sinyali (geçiş karesi vb.)
         brandless_active = any(
-            not _norm(t.get("marka", "")) and _canonical_tur(t.get("tur", "")) not in _PASSIVE_TURS
+            not _norm(t.get("marka", ""))
+            and _canonical_tur(t.get("tur", "")) not in _PASSIVE_TURS
+            and _canonical_tur(t.get("tur", "")) not in excluded_pl
             for t in ad_tespitler
         )
         generic_only = not markalar and not tespitler
@@ -178,7 +207,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         for t in ad_tespitler:
             if not _norm(t.get("marka", "")):
                 tur = _canonical_tur(t.get("tur", ""))
-                if tur not in _PASSIVE_TURS:
+                if tur not in _PASSIVE_TURS and tur not in excluded_pl:
                     type_counts[tur] = type_counts.get(tur, 0) + 1
 
         # Marka raporu birikteci
