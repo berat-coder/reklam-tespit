@@ -696,6 +696,73 @@ body.viewer .admin-only { display: none !important; }
   .bn-item.active .ti { transform: translateY(-1px); }
   .main { padding-bottom: 78px !important; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   GLASSY / GRADIENT tema katmanı — degrade zemin + camsı kartlar +
+   gradient butonlar + yumuşak parıltı. (indigo/mor vurgu korunur)
+   ════════════════════════════════════════════════════════════════════ */
+:root {
+  --surface: rgba(255,255,255,0.70);
+  --border: rgba(90,80,160,0.16);
+  --border2: rgba(90,80,160,0.26);
+  --shadow: 0 4px 20px rgba(30,27,75,0.06);
+  --shadow-lg: 0 18px 50px rgba(30,27,75,0.16), 0 4px 14px rgba(30,27,75,0.08);
+}
+body {
+  background:
+    radial-gradient(1100px 560px at 12% -12%, rgba(124,92,255,0.20), transparent 60%),
+    radial-gradient(1000px 520px at 112% 8%, rgba(79,70,229,0.16), transparent 55%),
+    linear-gradient(180deg, #f4f4fd 0%, #eef0fb 100%);
+  background-attachment: fixed;
+}
+/* Camsı yüzeyler */
+.section, .stat-tile, .channel-card, .video-card, .brand-card, .report-hero,
+.queue-card, .key-card, .health-strip, .det-card, .modal-content, .setup-card,
+.overlay-row, .sidebar, .bottom-nav, .brand-vid-row, .lb-row {
+  backdrop-filter: blur(16px) saturate(1.35);
+  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+}
+/* Kart hissi: yumuşak köşe + cam-kenar highlight */
+.section, .stat-tile, .channel-card, .video-card, .autoscan, .report-hero,
+.brand-card, .setup-card, .modal-content {
+  border-radius: 18px;
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.45);
+}
+.channel-card:hover, .video-card:hover, .det-card:hover {
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+/* Primary buton: gradient + parıltı */
+.btn.primary {
+  background: var(--accent-grad); border-color: transparent; color: #fff;
+  box-shadow: 0 6px 18px rgba(79,70,229,0.32);
+}
+.btn.primary:hover { filter: brightness(1.06); box-shadow: 0 9px 26px rgba(79,70,229,0.42); }
+/* Öne çıkan sayılar gradient */
+.stat-tile-num, .as-stat-num, .rb-count { }
+.report-hero, .section { border: 1px solid var(--border); }
+/* KPI vurgu barları gradient */
+.rb-fill, .brand-bar-fill { background: var(--accent-grad) !important; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: rgba(24,27,38,0.60);
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.15);
+    --shadow: 0 4px 20px rgba(0,0,0,0.38);
+    --shadow-lg: 0 18px 52px rgba(0,0,0,0.60), 0 4px 14px rgba(0,0,0,0.4);
+  }
+  body {
+    background:
+      radial-gradient(1100px 560px at 12% -12%, rgba(124,92,255,0.22), transparent 60%),
+      radial-gradient(1000px 520px at 112% 8%, rgba(79,70,229,0.16), transparent 55%),
+      linear-gradient(180deg, #0b0d13 0%, #0e1017 100%);
+    background-attachment: fixed;
+  }
+  .section, .stat-tile, .channel-card, .video-card, .autoscan, .report-hero,
+  .brand-card, .setup-card, .modal-content {
+    box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+}
 </style>
 </head>
 <body>
