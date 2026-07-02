@@ -55,6 +55,16 @@ def config_endpoint():
         if "excluded_placements" in data and isinstance(data["excluded_placements"], list):
             cfg["excluded_placements"] = [str(x).strip() for x in data["excluded_placements"]
                                           if str(x).strip()]
+        if isinstance(data.get("frame_retention"), dict):
+            fr = dict(cfg.get("frame_retention") or {})
+            if "enabled" in data["frame_retention"]:
+                fr["enabled"] = bool(data["frame_retention"]["enabled"])
+            if "days" in data["frame_retention"]:
+                try:
+                    fr["days"] = max(0, int(data["frame_retention"]["days"]))
+                except (TypeError, ValueError):
+                    pass
+            cfg["frame_retention"] = fr
         save_config(cfg)
         return jsonify({"ok": True})
     cfg = load_config()
@@ -65,6 +75,7 @@ def config_endpoint():
         "channels": cfg.get("channels", []),
         "global_ignored_brands": cfg.get("global_ignored_brands", []),
         "excluded_placements": cfg.get("excluded_placements", []),
+        "frame_retention": cfg.get("frame_retention", {"enabled": True, "days": 2}),
     })
 
 

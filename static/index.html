@@ -765,6 +765,20 @@ body.viewer .admin-only { display: none !important; }
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-photo-minus" style="color:var(--accent)"></i> Kare Saklama (yer yönetimi)
+      </div>
+      <div class="setup-desc">Kareler (görseller) en çok yeri kaplar. Belirtilen günden sonra <strong>sadece kareler</strong> otomatik silinir → disk yer açılır. <strong>Rapor/veri ASLA silinmez</strong>, hep kalır (eski videolarda kareler boş görünür ama rapor durur).</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer">
+        <input type="checkbox" id="frEnabled" style="width:16px;height:16px;accent-color:var(--accent)">
+        Eski kareleri otomatik sil (yer aç)
+      </label>
+      <div class="add-field"><label>Kaç gün sonra kareler silinsin</label>
+        <input id="frDays" type="number" min="1" max="60"></div>
+      <button class="btn primary full" onclick="saveFrameRetention()" style="margin-top:10px"><i class="ti ti-device-floppy"></i> Kare Saklama Ayarını Kaydet</button>
+    </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
       <div class="setup-title" style="font-size:15px">👤 Kullanıcılar & Roller</div>
       <div class="setup-desc"><strong>Yönetici</strong> her şeyi değiştirebilir. <strong>Görüntüleyici</strong> yalnızca görür — tarama, silme, düzenleme yapamaz. Ana hesap her zaman yöneticidir.</div>
       <div id="userList" style="margin-bottom:12px"></div>
@@ -973,6 +987,7 @@ function openSetup(section) {
   loadAutoScanSettings();
   loadIgnoreList();
   loadPlacements();
+  loadFrameRetention();
   if (section === 'autoscan') {
     setTimeout(() => { const el = $('autoscanSettings'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
   } else {
@@ -1031,6 +1046,31 @@ async function savePlacements() {
   })).json();
   if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
   toast('Yerleşim ayarı kaydedildi', 'success');
+}
+
+async function loadFrameRetention() {
+  if (!$('frEnabled')) return;
+  let fr = {enabled: true, days: 2};
+  try {
+    const d = await (await fetch('/api/config')).json();
+    if (d.frame_retention) fr = d.frame_retention;
+  } catch (e) {}
+  $('frEnabled').checked = fr.enabled !== false;
+  $('frDays').value = fr.days ?? 2;
+}
+async function saveFrameRetention() {
+  const payload = {frame_retention: {
+    enabled: $('frEnabled').checked,
+    days: parseInt($('frDays').value) || 2,
+  }};
+  const d = await (await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })).json();
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+  toast(payload.frame_retention.enabled
+    ? `Kareler ${payload.frame_retention.days} gün sonra silinecek (rapor kalır)`
+    : 'Kare otomatik silme kapatıldı', 'success', 5000);
 }
 
 async function loadAutoScanSettings() {

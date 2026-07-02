@@ -738,11 +738,10 @@ def _analyze_video_core(
     # komşu karelere bakarak doğrulama yapıyor). Yer sınırı yalnızca cap aşılınca
     # EN ESKİ video klasörlerini budayarak yönetilir (kanıt-kare silme YOK).
     try:
-        from services.storage import prune_frames
-        from config import FRAME_STORAGE_CAP_MB
-        prune_frames(FRAME_STORAGE_CAP_MB)
+        from services.storage import frame_maintenance
+        frame_maintenance()
     except Exception as e:
-        print(f"[FRAME] budama atlandı: {e}")
+        print(f"[FRAME] bakım atlandı: {e}")
 
     save_detections(video_id, detections)
 

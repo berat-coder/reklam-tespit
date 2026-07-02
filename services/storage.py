@@ -51,6 +51,47 @@ def keep_only_evidence_frames(video_id, keep_filenames):
     return removed
 
 
+def prune_frames_by_age(days):
+    """Analizden `days` günden eski videoların KARELERİNİ (görsellerini) sil →
+    yer açılır. Rapor/veri (DB) ETKİLENMEZ. Klasör mtime'ı analiz zamanıdır.
+    Döner: silinen video klasörü sayısı."""
+    days = int(days)
+    if days <= 0:
+        return 0
+    import time
+    cutoff = time.time() - days * 86400
+    removed = 0
+    try:
+        if not FRAMES_DIR.exists():
+            return 0
+        for p in FRAMES_DIR.iterdir():
+            try:
+                if p.is_dir() and p.stat().st_mtime < cutoff:
+                    shutil.rmtree(p, ignore_errors=True)
+                    removed += 1
+            except OSError:
+                pass
+    except Exception:
+        return removed
+    if removed:
+        print(f"[FRAME] {removed} eski video klasörü silindi (>{days} gün) — rapor korundu")
+    return removed
+
+
+def frame_maintenance():
+    """Tek giriş noktası: (1) yaşa göre eski kareleri sil (retention açıksa),
+    (2) boyut cap'i aşılırsa en eski klasörleri buda. config'ten okur."""
+    try:
+        from config import load_config, FRAME_STORAGE_CAP_MB
+        cfg = load_config()
+        fr = cfg.get("frame_retention") or {}
+        if fr.get("enabled", True):
+            prune_frames_by_age(int(fr.get("days", 2)))
+        prune_frames(FRAME_STORAGE_CAP_MB)
+    except Exception as e:
+        print(f"[FRAME] bakım hatası: {e}")
+
+
 def prune_frames(cap_mb):
     """Toplam frame boyutu cap_mb'yi aşarsa en eski (mtime) video klasörlerini
     silerek sınırın altına in. Döner: silinen video klasörü sayısı."""

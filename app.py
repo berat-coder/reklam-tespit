@@ -9,10 +9,10 @@ from config import BASE_DIR, DATA_DIR, FRAMES_DIR, FRAME_STORAGE_CAP_MB
 # Frame'ler artık KALICI (volume). Açılışta toplam boyut cap'i aşılmışsa en eski
 # video klasörlerini buda (volume dolmasın) — silmek yerine sınırla.
 try:
-    from services.storage import prune_frames
-    prune_frames(FRAME_STORAGE_CAP_MB)
+    from services.storage import frame_maintenance
+    frame_maintenance()   # eski kareleri (retention) + cap aşımını temizle → yer aç
 except Exception as e:
-    print(f"[BAKIM] Frame budama atlandı: {e}")
+    print(f"[BAKIM] Frame bakımı atlandı: {e}")
 
 from models.database import init_db, verify_user, get_user_role
 from routes.api import api_bp

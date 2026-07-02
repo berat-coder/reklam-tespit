@@ -87,6 +87,13 @@ SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
 # EN ESKİ video klasörleri otomatik silinir (volume dolmasın). 500MB volume için
 # 450 → onlarca güncel video görüntülenebilir, eskiler budanır.
 FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 450)
+# Kare saklama süresi (gün). Analizden bu kadar gün sonra videonun KARELERİ
+# (görselleri) otomatik silinir → yer açılır. RAPOR/VERİ ASLA silinmez (DB'de
+# kalır). Ayarlar'dan açılıp kapatılır. 0 = kapalı (sadece boyut cap'i geçerli).
+DEFAULT_FRAME_RETENTION = {
+    "enabled": True,
+    "days": _int_env("FRAME_RETENTION_DAYS", 2),
+}
 # Süresi BİLİNMEYEN (şu an canlı) yayında lineer ffmpeg en fazla bu kadar saniye
 # okur — yoksa canlı yayın sonsuza dek okunur, kuyruk tıkanır. Bitmiş yayınlar
 # (süresi bilinen) bundan etkilenmez; tüm VOD paralel seek ile çıkarılır.
@@ -177,6 +184,7 @@ def load_config():
         "auto_scan": dict(DEFAULT_AUTO_SCAN),
         "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
         "excluded_placements": list(DEFAULT_EXCLUDED_PLACEMENTS),
+        "frame_retention": dict(DEFAULT_FRAME_RETENTION),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır
     if _CONFIG_FILE.exists():
@@ -191,6 +199,12 @@ def load_config():
                 cfg["global_ignored_brands"] = saved["global_ignored_brands"]
             if saved.get("excluded_placements") is not None:
                 cfg["excluded_placements"] = saved["excluded_placements"]
+            if isinstance(saved.get("frame_retention"), dict):
+                fr = dict(DEFAULT_FRAME_RETENTION)
+                fr.update({k: saved["frame_retention"][k]
+                           for k in ("enabled", "days")
+                           if k in saved["frame_retention"]})
+                cfg["frame_retention"] = fr
         except Exception:
             pass
     return cfg

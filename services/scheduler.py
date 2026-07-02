@@ -159,13 +159,12 @@ def _tick(cfg, asc, eff_now, night_key):
 
     analyzed = _analyze_one(asc, state)
 
-    # Frame depolama backstop: cap aşıldıysa en eski klasörleri buda
+    # Frame bakımı: eski kareleri (retention) sil + cap aşımını buda → yer aç
     try:
-        from services.storage import prune_frames
-        from config import FRAME_STORAGE_CAP_MB
-        prune_frames(FRAME_STORAGE_CAP_MB)
+        from services.storage import frame_maintenance
+        frame_maintenance()
     except Exception as e:
-        print(f"[OTO-TARAMA] frame budama atlandı: {e}")
+        print(f"[OTO-TARAMA] frame bakımı atlandı: {e}")
 
     state["last_tick_ts"] = int(time.time())
     state["last_run_iso"] = eff_now.isoformat()
