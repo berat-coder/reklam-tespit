@@ -2833,18 +2833,58 @@ function overlayFlag(i, flag, value) {
 
 function jsq(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
-// Marka logosu: baş-harf avatarı + en iyi-çaba favicon (.com.tr → .com).
-// Favicon yüklenemezse baş harf kalır (kırık görsel olmaz).
+// Bilinen marka → domain (yüksek güven; doğru logo için). Anahtar: küçük harf,
+// boşluk/işaret atılmış hâli. Buraya ekledikçe kapsama artar.
+const BRAND_DOMAINS = {
+  a101:'a101.com', bim:'bim.com.tr', sok:'sokmarket.com.tr', migros:'migros.com.tr',
+  n11:'n11.com', trendyol:'trendyol.com', hepsiburada:'hepsiburada.com', amazon:'amazon.com.tr',
+  bilyoner:'bilyoner.com', nesine:'nesine.com', misli:'misli.com', tuttur:'tuttur.com',
+  iddaa:'iddaa.com', birebin:'birebin.com', oley:'oley.com', tjk:'tjk.org',
+  okx:'okx.com', okxtr:'okx.com', binance:'binance.com', bitget:'bitget.com',
+  koc:'koc.com.tr', arcelik:'arcelik.com.tr', beko:'beko.com.tr', vestel:'vestel.com.tr',
+  turkcell:'turkcell.com.tr', vodafone:'vodafone.com.tr', turktelekom:'turktelekom.com.tr',
+  akbank:'akbank.com', garanti:'garantibbva.com.tr', garantibbva:'garantibbva.com.tr',
+  ziraat:'ziraatbank.com.tr', isbankasi:'isbank.com.tr', yapikredi:'yapikredi.com.tr',
+  qnb:'qnb.com.tr', denizbank:'denizbank.com', teb:'teb.com.tr', enpara:'enpara.com',
+  ford:'ford.com.tr', fordtrucks:'ford.com.tr', fiat:'fiat.com.tr', renault:'renault.com.tr',
+  filliboya:'filliboya.com', marshall:'marshallboya.com', dyo:'dyo.com.tr',
+  headshoulders:'headandshoulders.com', braun:'braun.com', honor:'hihonor.com',
+  clear:'clear.com.tr', clearmen:'clear.com.tr', solo:'solo.com.tr', gursoy:'gursoy.com.tr',
+  modalife:'modalife.com.tr', bilyonerapp:'bilyoner.com', spor:'', karakullukcu:'',
+};
+
+// Türkçe karakterleri ASCII'ye indir (domain/eşleşme için): ç→c, ğ→g, ı→i, ö→o, ş→s, ü→u
+function _trAscii(s) {
+  return String(s || '').toLowerCase()
+    .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i')
+    .replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u');
+}
+
+// Marka için denenecek domain adaylarını (sırayla) üretir.
+function _brandCandidates(name) {
+  const key = _trAscii(name).replace(/[^a-z0-9]/g, '');   // "Koç"→"koc", "Gürsoy"→"gursoy"
+  const out = [];
+  // Marka adı zaten domain gibiyse ("arabam.com", "trendyol.com.tr") doğrudan kullan
+  const asDomain = _trAscii(name).replace(/\s+/g, '');
+  if (/^[a-z0-9.-]+\.[a-z]{2,3}(\.[a-z]{2})?$/.test(asDomain)) out.push(asDomain);
+  if (BRAND_DOMAINS[key]) out.push(BRAND_DOMAINS[key]);       // bilinen (kesin)
+  if (key.length >= 2) out.push(key + '.com.tr', key + '.com');
+  const first = _trAscii(name).split(/\s+/)[0].replace(/[^a-z0-9]/g, '');
+  if (first && first !== key && first.length >= 2) out.push(first + '.com.tr', first + '.com');
+  return [...new Set(out.filter(Boolean))];
+}
+
+// Marka logosu: baş-harf avatarı + favicon (bilinen domain → tahmin zinciri).
+// Hiçbiri yüklenmezse baş harf kalır (asla kırık görsel).
 function brandAvatar(name, lg) {
   const init = ((String(name || '?').trim()[0]) || '?').toUpperCase();
-  const dom = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cands = _brandCandidates(name);
   let img = '';
-  if (dom) {
-    const tr = `https://icons.duckduckgo.com/ip3/${dom}.com.tr.ico`;
-    const com = `https://icons.duckduckgo.com/ip3/${dom}.com.ico`;
-    img = `<img src="${tr}" loading="lazy"
+  if (cands.length) {
+    const srcs = cands.map(d => 'https://icons.duckduckgo.com/ip3/' + d + '.ico');
+    img = `<img src="${srcs[0]}" loading="lazy" data-i="0" data-srcs='${JSON.stringify(srcs)}'
       onload="this.style.opacity=1;var p=this.parentElement.querySelector('.brand-ava-init');if(p)p.style.opacity=0"
-      onerror="if(!this.dataset.f){this.dataset.f=1;this.src='${com}'}else{this.remove()}">`;
+      onerror="var s=JSON.parse(this.dataset.srcs||'[]'),i=(+this.dataset.i)+1;if(i&lt;s.length){this.dataset.i=i;this.src=s[i]}else{this.remove()}">`;
   }
   return `<span class="brand-ava${lg ? ' lg' : ''}"><span class="brand-ava-init">${esc(init)}</span>${img}</span>`;
 }
