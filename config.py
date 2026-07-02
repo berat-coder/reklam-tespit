@@ -85,8 +85,8 @@ AUTO_SPONSOR_THRESHOLD = _int_env("AUTO_SPONSOR_THRESHOLD", 70)
 SHORTS_MAX_DURATION = _int_env("SHORTS_MAX_DURATION", 60)
 # Frame depolama üst sınırı (MB). Tüm kareler saklanır; toplam boyut bunu aşarsa
 # EN ESKİ video klasörleri otomatik silinir (volume dolmasın). 500MB volume için
-# 450 → onlarca güncel video görüntülenebilir, eskiler budanır.
-FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 450)
+# 300 → ~150MB gerçek boşluk (data.db/config/WAL için pay); onlarca video görüntülenir.
+FRAME_STORAGE_CAP_MB = _int_env("FRAME_STORAGE_CAP_MB", 300)
 # Kare saklama süresi (gün). Analizden bu kadar gün sonra videonun KARELERİ
 # (görselleri) otomatik silinir → yer açılır. RAPOR/VERİ ASLA silinmez (DB'de
 # kalır). Ayarlar'dan açılıp kapatılır. 0 = kapalı (sadece boyut cap'i geçerli).
