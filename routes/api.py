@@ -679,6 +679,10 @@ def brand_flag(video_id):
         return jsonify({"error": "Video bulunamadı"}), 404
     try:
         set_channel_brand_flag(v["channel_id"], marka, flag, value)
+        # Ana sponsor yapılınca "sadece gerçek reklamları say" (köşe logosunu
+        # sayma / active_only) da otomatik işaretlensin; geri alınınca kalksın.
+        if flag == "main_sponsor":
+            set_channel_brand_flag(v["channel_id"], marka, "active_only", value)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     agg = recompute_video_aggregates(video_id)
