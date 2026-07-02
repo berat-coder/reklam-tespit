@@ -776,6 +776,8 @@ body.viewer .admin-only { display: none !important; }
       <div class="add-field"><label>Kaç gün sonra kareler silinsin</label>
         <input id="frDays" type="number" min="1" max="60"></div>
       <button class="btn primary full" onclick="saveFrameRetention()" style="margin-top:10px"><i class="ti ti-device-floppy"></i> Kare Saklama Ayarını Kaydet</button>
+      <div id="diskStatus" style="font-size:12px;color:var(--dim);margin-top:12px"></div>
+      <button class="btn full" onclick="cleanFramesNow(this)" style="margin-top:8px"><i class="ti ti-trash"></i> Diski Şimdi Temizle</button>
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
@@ -1057,6 +1059,31 @@ async function loadFrameRetention() {
   } catch (e) {}
   $('frEnabled').checked = fr.enabled !== false;
   $('frDays').value = fr.days ?? 2;
+  loadDiskStatus();
+}
+
+async function loadDiskStatus() {
+  const el = $('diskStatus');
+  if (!el) return;
+  try {
+    const d = await (await fetch('/api/maintenance/disk')).json();
+    const pct = d.disk_total_mb ? Math.round((d.disk_used_mb / d.disk_total_mb) * 100) : 0;
+    const col = pct >= 90 ? 'var(--red)' : (pct >= 75 ? 'var(--amber)' : 'var(--green)');
+    el.innerHTML = `Disk: <strong style="color:${col}">${d.disk_used_mb}/${d.disk_total_mb} MB (%${pct})</strong>
+      · kareler: ${d.ephemeral_frames_mb} MB · boş: ${d.disk_free_mb} MB`;
+  } catch (e) { el.textContent = ''; }
+}
+
+async function cleanFramesNow(btn) {
+  if (!confirm('Eski kareler (retention) + boyut sınırı şimdi uygulanıp disk temizlenecek. Rapor/veri silinmez. Devam?')) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Temizleniyor...'; }
+  try {
+    const d = await (await fetch('/api/maintenance/clean-frames', {method: 'POST'})).json();
+    if (d.error) toast('Hata: ' + d.error, 'error');
+    else toast(`${d.deleted_video_dirs} video karesi silindi · ${d.freed_mb} MB açıldı · disk %${Math.round((d.disk_used_mb/d.disk_total_mb)*100)}`, 'success', 6000);
+  } catch (e) { toast('Temizleme hatası: ' + e.message, 'error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-trash"></i> Diski Şimdi Temizle'; }
+  loadDiskStatus();
 }
 async function saveFrameRetention() {
   const payload = {frame_retention: {

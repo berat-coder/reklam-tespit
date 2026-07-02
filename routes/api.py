@@ -242,6 +242,55 @@ def maintenance_disk():
     })
 
 
+@api_bp.route("/api/maintenance/clean-frames", methods=["POST"])
+def maintenance_clean_frames():
+    """Kare bakımını ŞİMDİ çalıştır: retention (N günden eski kareler) + boyut
+    cap'i uygula, diski aç. Rapor/veri silinmez. Önce/sonra disk döner."""
+    import shutil as _sh
+    from config import DATA_DIR, FRAMES_DIR, FRAME_STORAGE_CAP_MB
+    from services.storage import prune_frames_by_age, prune_frames
+
+    def _dirsize(p):
+        t = 0
+        try:
+            for root, _, files in os.walk(p):
+                for f in files:
+                    try: t += os.path.getsize(os.path.join(root, f))
+                    except OSError: pass
+        except Exception: pass
+        return t
+
+    def _nvids():
+        try: return sum(1 for x in FRAMES_DIR.iterdir() if x.is_dir())
+        except Exception: return 0
+
+    du0 = _sh.disk_usage(str(DATA_DIR))
+    frames_before = _dirsize(FRAMES_DIR)
+    vids_before = _nvids()
+
+    cfg = load_config()
+    fr = cfg.get("frame_retention") or {}
+    aged = prune_frames_by_age(int(fr.get("days", 2))) if fr.get("enabled", True) else 0
+    capped = prune_frames(FRAME_STORAGE_CAP_MB)
+
+    du1 = _sh.disk_usage(str(DATA_DIR))
+    frames_after = _dirsize(FRAMES_DIR)
+    return jsonify({
+        "ok": True,
+        "deleted_video_dirs": aged + capped,
+        "freed_mb": round((frames_before - frames_after) / 1e6, 1),
+        "video_dirs_before": vids_before, "video_dirs_after": _nvids(),
+        "frames_mb_before": round(frames_before / 1e6, 1),
+        "frames_mb_after": round(frames_after / 1e6, 1),
+        "disk_used_mb": round(du1.used / 1e6, 1),
+        "disk_total_mb": round(du1.total / 1e6, 1),
+        "disk_free_mb": round(du1.free / 1e6, 1),
+        "retention_days": int(fr.get("days", 2)),
+        "retention_enabled": bool(fr.get("enabled", True)),
+        "cap_mb": FRAME_STORAGE_CAP_MB,
+    })
+
+
 @api_bp.route("/api/maintenance/auto-sponsors", methods=["POST"])
 def maintenance_auto_sponsors():
     """Mevcut tüm videolarda eşik üstü VEYA sürekli ekranda olan (köşe logosu)
