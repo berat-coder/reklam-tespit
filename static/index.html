@@ -496,8 +496,8 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 
 /* Yazdırma (PDF) — sadece rapor içeriği */
 @media print {
-  .sidebar, .sidebar-backdrop, .menu-toggle, .toast-wrap,
-  .export-bar, .det-filters, .brand-card-acts, .overlay-actions,
+  .sidebar, .sidebar-backdrop, .menu-toggle, .toast-wrap, .bottom-nav,
+  .cookie-banner, .export-bar, .det-filters, .brand-card-acts, .overlay-actions,
   #lv-actions { display: none !important; }
   body { background: #fff !important; color: #000 !important; }
   .layout { grid-template-columns: 1fr !important; }
@@ -623,6 +623,7 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
 }
 .cookie-banner .ti { font-size: 16px; }
 .cookie-banner code { background: rgba(255,255,255,.2); padding: 1px 5px; border-radius: 4px; }
+.cookie-banner.warn { background: var(--amber); color: #1a1200; }
 
 /* Ana sayfa sağlık şeridi */
 .health-strip {
@@ -650,9 +651,10 @@ body.viewer .admin-only { display: none !important; }
   .layout { grid-template-columns: 1fr; }
   .menu-toggle { display: flex; }
   .sidebar {
-    position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 50;
+    position: fixed; top: 0; left: 0; bottom: 0; width: 260px; z-index: 90;
     height: 100vh; transform: translateX(-100%); transition: transform 0.2s ease;
   }
+  .sidebar-backdrop { z-index: 85; }
   .sidebar.open { transform: none; }
   .sidebar.open ~ .sidebar-backdrop { display: block; }
   .main { padding: 16px; padding-top: 64px; }
@@ -1489,12 +1491,16 @@ async function loadAutoScanPanel() {
 }
 
 async function runAutoScanNow(btn) {
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Taranıyor...'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Başlatılıyor...'; }
   try {
     const d = await (await fetch('/api/auto-scan/run-now', {method:'POST'})).json();
     if (d.error) { toast('Hata: ' + d.error, 'error'); }
-    else toast('Tarama tetiklendi — bir canlı yayın varsa analize alındı', 'success');
+    else toast('Tarama arka planda başladı — kanallar keşfediliyor (1-2 dk sürebilir)', 'success', 6000);
   } catch (e) { toast('Tarama hatası', 'error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-player-play"></i> Şimdi bir yayın tara'; }
+  // Keşif arka planda — panel birkaç kez yenilensin ki sonuç görünsün
+  setTimeout(loadAutoScanPanel, 20000);
+  setTimeout(loadAutoScanPanel, 60000);
   loadAutoScanPanel();
 }
 
@@ -2432,9 +2438,16 @@ async function loadHealth() {
   const banner = $('cookieBanner');
   if (banner) {
     if (h.cookie_ok === false) {
+      banner.className = 'cookie-banner';
       banner.style.display = 'flex';
       banner.innerHTML = `<i class="ti ti-alert-triangle"></i>
         <span>YouTube cookie süresi dolmuş — taramalar çalışmıyor. ${IS_ADMIN?'Ayarlardan/Railway üzerinden cookie yenileyin.':'Yöneticiye bildir.'}</span>
+        <span style="margin-left:auto;cursor:pointer;opacity:.8" onclick="goStatus()">Durum →</span>`;
+    } else if (h.quota_exhausted) {
+      banner.className = 'cookie-banner warn';
+      banner.style.display = 'flex';
+      banner.innerHTML = `<i class="ti ti-hourglass-high"></i>
+        <span>Gemini günlük kotası doldu — analizler kota sıfırlanınca (≈ TSİ 10:00) otomatik devam eder.</span>
         <span style="margin-left:auto;cursor:pointer;opacity:.8" onclick="goStatus()">Durum →</span>`;
     } else {
       banner.style.display = 'none';
@@ -2449,6 +2462,7 @@ async function loadHealth() {
       <span>Cookie: <strong>${ok?'geçerli':'süresi dolmuş'}</strong></span>
       <span class="hs-sep">·</span>
       <span>Son başarılı tarama: <strong>${_agoTr(h.last_success_iso)}</strong></span>
+      ${h.quota_exhausted?`<span class="hs-sep">·</span><span style="color:var(--amber)">Gemini kotası doldu (≈10:00'da açılır)</span>`:''}
       ${h.errors_24h?`<span class="hs-sep">·</span><span style="color:var(--red)">${h.errors_24h} hata (24s)</span>`:''}
       <span style="margin-left:auto;cursor:pointer;color:var(--accent)" onclick="goStatus()">Detay →</span>
     </div>`;

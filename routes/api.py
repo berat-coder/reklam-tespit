@@ -417,12 +417,12 @@ def live_archive():
 
 @api_bp.route("/api/auto-scan/run-now", methods=["POST"])
 def auto_scan_run_now():
+    """Elle bir tarama tick'i tetikle. Keşif (16 kanal × yt-dlp) dakikalar
+    sürebilir → ARKA PLANDA çalıştır, isteği bekletme (HTTP timeout olmasın)."""
     from services.scheduler import run_tick_now, get_status
-    try:
-        run_tick_now()
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True, **get_status()})
+    import threading
+    threading.Thread(target=run_tick_now, daemon=True, name="run-now").start()
+    return jsonify({"ok": True, "started": True, **get_status()})
 
 
 @api_bp.route("/api/daily-report")
@@ -542,7 +542,8 @@ def channel_browse(ch_id=None):
 
     def _fetch():
         try:
-            result_box[0] = fetch_channel_videos(channel_url)
+            # Browse = manuel video seçimi → zaman filtresi YOK (tüm liste)
+            result_box[0] = fetch_channel_videos(channel_url, last_hours=0)
         except Exception as e:
             error_box[0] = str(e)
 

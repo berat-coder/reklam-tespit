@@ -364,6 +364,9 @@ def get_health():
         last_cookie = conn.execute(
             "SELECT ts FROM scan_log WHERE code='cookie_expired' ORDER BY id DESC LIMIT 1"
         ).fetchone()
+        last_quota = conn.execute(
+            "SELECT ts FROM scan_log WHERE code='quota_daily' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         errs = conn.execute(
             "SELECT COUNT(*) AS n FROM scan_log WHERE status='error' AND ts >= ?",
             (day_ago,)
@@ -374,11 +377,19 @@ def get_health():
         ).fetchone()
     last_ok_ts = last_ok["ts"] if last_ok else None
     last_cookie_ts = last_cookie["ts"] if last_cookie else None
+    last_quota_ts = last_quota["ts"] if last_quota else None
     # Cookie: son cookie hatasından sonra başarılı tarama olduysa tekrar OK sayılır
     cookie_ok = (last_cookie_ts is None) or (bool(last_ok_ts) and last_ok_ts > last_cookie_ts)
+    # Gemini günlük kota: son 12 saatte kota hatası var ve sonrasında başarı yoksa
+    # "tükenmiş" say (kota gece yarısı PT ≈ TSİ 10:00'da sıfırlanır).
+    half_day_ago = (datetime.utcnow() - __import__("datetime").timedelta(hours=12)).isoformat()
+    quota_exhausted = (bool(last_quota_ts) and last_quota_ts >= half_day_ago
+                       and not (bool(last_ok_ts) and last_ok_ts > last_quota_ts))
     return {
         "cookie_ok": cookie_ok,
         "cookie_error_at": last_cookie_ts,
+        "quota_exhausted": quota_exhausted,
+        "quota_error_at": last_quota_ts,
         "last_success_iso": last_ok_ts,
         "errors_24h": int(errs["n"]) if errs else 0,
         "last_error": dict(last_err) if last_err else None,

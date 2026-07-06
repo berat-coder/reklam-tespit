@@ -74,10 +74,21 @@ def _entry_ts(d):
         return 0
 
 
+# Tarih/durum çözümleme cache'i (process ömrü). BİTMİŞ yayının tarihi değişmez;
+# canlı/yaklaşan/hata gibi geçici durumlar CACHE'LENMEZ (durum değişebilir).
+# Bu olmadan scheduler her 15dk tick'inde pencere-dışı aynı videolara tekrar
+# tekrar sorgu atıyordu (16 kanal × 3 sorgu/saat başı ~192 istek → rate-limit riski).
+_META_CACHE = {}
+_META_CACHE_MAX = 3000
+
+
 def _resolve_video_meta(url):
     """Tek videonun gerçek (tarih, durum)'unu çöz — flat çıktı tarih/durum
     vermediği için. Döner: (epoch_ts_or_None, live_status).
     live_status: 'is_live' | 'is_upcoming' | 'was_live' | 'not_live' | 'error'."""
+    cached = _META_CACHE.get(url)
+    if cached is not None:
+        return cached
     try:
         with YoutubeDL(get_ydl_opts({
             "skip_download": True, "noplaylist": True,
@@ -100,6 +111,12 @@ def _resolve_video_meta(url):
                 ts = int(calendar.timegm(_t.strptime(str(ud), "%Y%m%d")))
             except Exception:
                 ts = None
+    # Yalnız KALICI sonuçları cache'le: bitmiş yayın (was_live/not_live) + tarihi
+    # belli. Canlı/yaklaşan/hata geçicidir — sonraki tick'te yeniden bakılmalı.
+    if status in ("was_live", "not_live", "post_live") and ts:
+        if len(_META_CACHE) > _META_CACHE_MAX:
+            _META_CACHE.clear()
+        _META_CACHE[url] = (ts, status)
     return ts, status
 
 
