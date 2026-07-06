@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reklam Tespit Sistemi</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.24.0/dist/tabler-icons.min.css">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -700,70 +703,118 @@ body.viewer .admin-only { display: none !important; }
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   GLASSY / GRADIENT tema katmanı — degrade zemin + camsı kartlar +
-   gradient butonlar + yumuşak parıltı. (indigo/mor vurgu korunur)
+   PROFESYONEL TEMA — Stripe/Linear/Vercel dili: nötr palet, ince keskin
+   çizgiler, Inter tipografi, minimum gölge, siyah primary, mavi vurgu.
+   Gradient/cam YOK. (Bu katman en sonda: tüm eski stilleri geçersiz kılar.)
    ════════════════════════════════════════════════════════════════════ */
 :root {
-  --surface: rgba(255,255,255,0.70);
-  --border: rgba(90,80,160,0.16);
-  --border2: rgba(90,80,160,0.26);
-  --shadow: 0 4px 20px rgba(30,27,75,0.06);
-  --shadow-lg: 0 18px 50px rgba(30,27,75,0.16), 0 4px 14px rgba(30,27,75,0.08);
+  --bg: #fafafa; --bg2: #ffffff; --bg3: #f4f4f5; --bg4: #e9e9eb;
+  --surface: #ffffff;
+  --border: #e6e6e9; --border2: #d4d4d8;
+  --text: #18181b; --dim: #6b7280; --dimmer: #a1a1aa;
+  --accent: #2563eb; --accent2: #1d4ed8;
+  --accent-soft: rgba(37,99,235,0.08);
+  --accent-grad: #2563eb;                 /* eski gradient kullanan her şey düz maviye iner */
+  --ink: #18181b; --ink-hover: #000;      /* primary buton (siyah) */
+  --green: #16a34a; --amber: #d97706; --red: #dc2626; --blue: #2563eb; --purple: #7c3aed;
+  --shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
 }
 body {
-  background:
-    radial-gradient(1100px 560px at 12% -12%, rgba(124,92,255,0.20), transparent 60%),
-    radial-gradient(1000px 520px at 112% 8%, rgba(79,70,229,0.16), transparent 55%),
-    linear-gradient(180deg, #f4f4fd 0%, #eef0fb 100%);
-  background-attachment: fixed;
+  background: var(--bg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13.5px; letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
 }
-/* Camsı yüzeyler */
+/* Cam/blur kapalı, köşeler sıkı, gölge minimum */
 .section, .stat-tile, .channel-card, .video-card, .brand-card, .report-hero,
 .queue-card, .key-card, .health-strip, .det-card, .modal-content, .setup-card,
-.overlay-row, .sidebar, .bottom-nav, .brand-vid-row, .lb-row {
-  backdrop-filter: blur(16px) saturate(1.35);
-  -webkit-backdrop-filter: blur(16px) saturate(1.35);
+.overlay-row, .sidebar, .bottom-nav, .brand-vid-row, .lb-row, .autoscan {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
 }
-/* Kart hissi: yumuşak köşe + cam-kenar highlight */
 .section, .stat-tile, .channel-card, .video-card, .autoscan, .report-hero,
 .brand-card, .setup-card, .modal-content {
-  border-radius: 18px;
-  box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.45);
+  border-radius: 10px; border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }
 .channel-card:hover, .video-card:hover, .det-card:hover {
-  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.5);
+  transform: none; border-color: var(--border2); box-shadow: var(--shadow-lg);
 }
-/* Primary buton: gradient + parıltı */
-.btn.primary {
-  background: var(--accent-grad); border-color: transparent; color: #fff;
-  box-shadow: 0 6px 18px rgba(79,70,229,0.32);
+/* Tipografi hiyerarşisi */
+h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
+.subtitle { font-size: 12.5px; }
+.section-title, .stat-tile-lbl, .as-stat-lbl, .cc-stat-lbl {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.07em; color: var(--dimmer);
 }
-.btn.primary:hover { filter: brightness(1.06); box-shadow: 0 9px 26px rgba(79,70,229,0.42); }
-/* Öne çıkan sayılar gradient */
-.stat-tile-num, .as-stat-num, .rb-count { }
-.report-hero, .section { border: 1px solid var(--border); }
-/* KPI vurgu barları gradient */
-.rb-fill, .brand-bar-fill { background: var(--accent-grad) !important; }
+.section-title-lg { font-size: 13.5px; font-weight: 600; }
+.stat-tile-num, .as-stat-num, .rb-count, .brand-bar-count, .ch-row-ads,
+.recent-ads, .lb-meta { font-variant-numeric: tabular-nums; }
+.stat-tile-num { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 
+/* Butonlar: siyah primary (Vercel), nötr secondary */
+.btn { border-radius: 7px; font-weight: 500; box-shadow: none; background: var(--surface); }
+.btn:hover { background: var(--bg3); }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; box-shadow: none; }
+.btn.primary:hover { background: var(--ink-hover); border-color: var(--ink-hover); filter: none; box-shadow: none; }
+
+/* Marka/logo: siyah kare */
+.brand-icon { background: var(--ink); border-radius: 8px; box-shadow: none; color: #fff; }
+.brand-ver { letter-spacing: 0.02em; }
+
+/* Nav: sakin aktif durum */
+.nav-item { font-weight: 500; }
+.nav-item.active { background: var(--bg3); color: var(--text); font-weight: 600; }
+.nav-item.active .ti { color: var(--text); }
+
+/* Oto-tarama paneli: mor blok yerine ciddi beyaz kart + hairline metrikler */
+.autoscan { background: var(--surface); color: var(--text); padding: 18px 20px; overflow: visible; }
+.autoscan::after { display: none; }
+.as-ico { background: var(--bg3); color: var(--text); border: 1px solid var(--border); font-size: 17px; width: 36px; height: 36px; }
+.as-title { color: var(--text); font-size: 14.5px; }
+.as-sub { color: var(--dim); opacity: 1; }
+.as-pill { background: var(--bg3); color: var(--dim); border: 1px solid var(--border); }
+.as-pill.live { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.as-stats { gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.as-stat { background: var(--surface); border-radius: 0; border-left: 1px solid var(--border); padding: 12px 16px; }
+.as-stat:first-child { border-left: none; }
+.as-stat-num { color: var(--text); font-weight: 700; }
+.as-stat-lbl { color: var(--dimmer); opacity: 1; }
+.as-btn { background: var(--surface); border: 1px solid var(--border2); color: var(--text); border-radius: 7px; font-weight: 500; }
+.as-btn:hover { background: var(--bg3); }
+.as-btn.solid { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* Barlar/sıralamalar: düz mavi, ince */
+.rb-fill, .brand-bar-fill { background: var(--accent) !important; }
+.rb-bar, .brand-bar-track { height: 6px; }
+.report-brand:nth-child(1) .rb-rank { background: var(--ink); }
+.rb-rank { border-radius: 6px; }
+
+/* Rozet/çipler daha sıkı */
+.video-ad-badge, .brand-pill, .type-chip, .role-badge, .overlay-tag { font-weight: 600; }
+
+/* Sağlık şeridi ve alt nav */
+.health-strip { border-radius: 8px; }
+.bottom-nav { box-shadow: 0 -1px 0 var(--border); }
+.bn-item.active { color: var(--accent); }
+
+/* ── Koyu mod (nötr, kontrastlı — Vercel dark) ── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface: rgba(24,27,38,0.60);
-    --border: rgba(255,255,255,0.08);
-    --border2: rgba(255,255,255,0.15);
-    --shadow: 0 4px 20px rgba(0,0,0,0.38);
-    --shadow-lg: 0 18px 52px rgba(0,0,0,0.60), 0 4px 14px rgba(0,0,0,0.4);
+    --bg: #09090b; --bg2: #101012; --bg3: #18181b; --bg4: #232327;
+    --surface: #121214;
+    --border: #232327; --border2: #303036;
+    --text: #f2f2f4; --dim: #8f94a1; --dimmer: #5b5e68;
+    --accent: #4d8dff; --accent2: #3b82f6; --accent-soft: rgba(77,141,255,0.12);
+    --accent-grad: #4d8dff;
+    --ink: #fafafa; --ink-hover: #ffffff;   /* koyu modda primary = beyaz buton */
+    --green: #4ade80; --amber: #fbbf24; --red: #f87171; --blue: #60a5fa; --purple: #a78bfa;
+    --shadow: 0 1px 2px rgba(0,0,0,0.5);
+    --shadow-lg: 0 6px 22px rgba(0,0,0,0.55);
   }
-  body {
-    background:
-      radial-gradient(1100px 560px at 12% -12%, rgba(124,92,255,0.22), transparent 60%),
-      radial-gradient(1000px 520px at 112% 8%, rgba(79,70,229,0.16), transparent 55%),
-      linear-gradient(180deg, #0b0d13 0%, #0e1017 100%);
-    background-attachment: fixed;
-  }
-  .section, .stat-tile, .channel-card, .video-card, .autoscan, .report-hero,
-  .brand-card, .setup-card, .modal-content {
-    box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.05);
-  }
+  .btn.primary, .as-btn.solid { color: #111; }
+  .brand-icon { color: #111; }
+  .report-brand:nth-child(1) .rb-rank { color: #111; }
+  .video-thumb, .det-thumb, .recent-thumb, .bframe img { filter: brightness(.92); }
 }
 </style>
 </head>
@@ -776,7 +827,7 @@ body {
 <div class="setup-overlay" id="setupOv" style="display:none" onclick="if(event.target===this)closeSetup()">
   <div class="setup-card" style="position:relative">
     <button class="setup-close" onclick="closeSetup()" title="Kapat" aria-label="Kapat"><i class="ti ti-x"></i></button>
-    <div class="setup-title">🔑 Gemini API Anahtarı</div>
+    <div class="setup-title">Gemini API Anahtarı</div>
     <div class="setup-desc">
       Devam etmek için Gemini API anahtarı girin. Anahtar yalnızca sizin bilgisayarınızda saklanır.
     </div>
@@ -850,7 +901,7 @@ body {
     </div>
 
     <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
-      <div class="setup-title" style="font-size:15px">👤 Kullanıcılar & Roller</div>
+      <div class="setup-title" style="font-size:15px">Kullanıcılar & Roller</div>
       <div class="setup-desc"><strong>Yönetici</strong> her şeyi değiştirebilir. <strong>Görüntüleyici</strong> yalnızca görür — tarama, silme, düzenleme yapamaz. Ana hesap her zaman yöneticidir.</div>
       <div id="userList" style="margin-bottom:12px"></div>
       <input type="text" class="setup-input" id="newUser" placeholder="kullanıcı adı" style="margin-bottom:8px">
@@ -1374,7 +1425,7 @@ async function loadHome() {
   const brands = (src.top_brands || []).slice(0, 8);
   html += `<div class="section report-hero">
     <div class="section-head">
-      <div class="section-title-lg">${useToday ? '🔥 Bugün Öne Çıkan Markalar' : '🔥 Son 7 Günün Öne Çıkan Markaları'}</div>
+      <div class="section-title-lg">${useToday ? 'Bugün Öne Çıkan Markalar' : 'Son 7 Günün Öne Çıkan Markaları'}</div>
       <div class="report-meta">${src.video_count} video · ${src.ad_frames} reklam</div>
     </div>`;
   if (!brands.length) {
@@ -2170,7 +2221,7 @@ async function renderChannelRules(chId) {
   const suggestions = r.suggestions || [];
   if (!aliases.length && !ignored.length && !suggestions.length) { box.innerHTML = ''; return; }
 
-  let h = `<div class="section"><div class="section-head"><div class="section-title-lg">🧠 Öğrenilen Kurallar</div></div>`;
+  let h = `<div class="section"><div class="section-head"><div class="section-title-lg">Öğrenilen Kurallar</div></div>`;
 
   if (suggestions.length) {
     h += `<div class="rule-suggest">
