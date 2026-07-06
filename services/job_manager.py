@@ -203,12 +203,21 @@ class JobManager:
                 "message": "",
             }
         with self._lock:
+            # Sırada bekleyenlerin kısa önizlemesi (UI kenar çubuğu için)
+            def _label(j):
+                if j.get("type") == "channel_scan":
+                    return "📡 Kanal taraması: " + (j.get("url", "").split("@")[-1] or "?")
+                u = j.get("url", "")
+                vid = u.split("v=")[-1].split("&")[0] if "v=" in u else u.rsplit("/", 1)[-1]
+                ch = j.get("channel_name") or ""
+                return "🎬 " + (f"{ch} · {vid}" if ch else vid)
             return {
                 "queue_length": len(self._queue),
                 "current": self._current,
                 "running": self._running,
                 "status": self._status,
                 "message": self._message,
+                "queued_items": [_label(j) for j in self._queue[:5]],
             }
 
     # ── Thread worker (Redis yoksa) ───────────────────────────────────────────

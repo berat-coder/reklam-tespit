@@ -891,9 +891,20 @@ body {
           <span id="queueLen" style="color:var(--dim)">0</span>
         </div>
         <div class="queue-msg" id="queueMsg">Hazır</div>
+        <div id="queueItems" style="margin-top:4px"></div>
         <button class="btn sm full admin-only" id="cancelQueueBtn" style="margin-top:6px;color:var(--red);border-color:var(--red)" onclick="cancelQueue()">
           <i class="ti ti-player-stop"></i> Tüm İşlemleri Durdur
         </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Ara</div>
+      <div style="position:relative">
+        <i class="ti ti-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--dimmer);font-size:14px"></i>
+        <input id="globalSearch" type="search" placeholder="Marka, kanal, video..."
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px 8px 30px;border-radius:8px;font-size:12px;font-family:inherit"
+          onkeypress="if(event.key==='Enter'&&this.value.trim().length>1){goSearch(this.value.trim());this.blur();}">
       </div>
     </div>
 
@@ -1286,6 +1297,16 @@ async function pollQueue() {
     }
     lenEl.textContent = d.queue_length;
     msgEl.textContent = (d.message || '').slice(0, 80);
+
+    // Sırada bekleyenlerin önizlemesi
+    const qi = $('queueItems');
+    if (qi) {
+      const items = d.queued_items || [];
+      qi.innerHTML = items.length
+        ? items.map(x => `<div style="font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0">${esc(x)}</div>`).join('')
+          + (d.queue_length > items.length ? `<div style="font-size:10px;color:var(--dimmer)">+${d.queue_length - items.length} daha...</div>` : '')
+        : '';
+    }
 
     // Aktif video varsa sidebar'da Canlı menüsünü göster
     const navLive = $('navLive');
@@ -2708,6 +2729,7 @@ async function loadVideo(id) {
         <div class="subtitle">Süre: ${fmtDur(v.duration)} · ${v.total_frames} frame analiz · ${v.api_calls} API çağrısı</div>
       </div>
       <div class="export-bar">
+        ${v.url ? `<a class="btn" href="${esc(v.url)}" target="_blank" rel="noopener" style="text-decoration:none"><i class="ti ti-brand-youtube" style="color:var(--red)"></i> YouTube'da Aç</a>` : ''}
         <button class="btn" onclick="exportCSV('/api/video/${encodeURIComponent(id)}/export.csv')"><i class="ti ti-file-spreadsheet"></i> CSV</button>
         <button class="btn" onclick="window.print()"><i class="ti ti-printer"></i> PDF / Yazdır</button>
         <button class="btn admin-only" style="color:var(--red);border-color:var(--red)" onclick="deleteAnalysis('${esc(id)}', ()=>goChannel('${esc(ch.id)}'))"><i class="ti ti-trash"></i> Analizi Sil</button>
@@ -2794,8 +2816,9 @@ async function loadVideo(id) {
   </div>`;
 
   $('main').innerHTML = html;
-  // Modal işlemleri için detection'ları cache'le
+  // Modal işlemleri için detection'ları + video URL'sini cache'le
   window._currentDets = dets;
+  window._currentVideoUrl = v.url || '';
 }
 
 function overlayRow(o, i) {
@@ -3078,8 +3101,19 @@ function showFrameDetail(idx) {
   const dets = window._currentDets || [];
   const d = dets.find(x => x.index === idx);
   if (!d) return;
+  // Bu saniyede YouTube'da açma linki (reklamı orijinal videoda doğrula)
+  let ytAt = '';
+  if (window._currentVideoUrl) {
+    const t = Math.max(0, Math.floor(d.seconds || 0));
+    const sep = window._currentVideoUrl.includes('?') ? '&' : '?';
+    ytAt = `<a href="${esc(window._currentVideoUrl)}${sep}t=${t}s" target="_blank" rel="noopener"
+      style="font-size:12px;color:var(--red);text-decoration:none;white-space:nowrap">
+      <i class="ti ti-brand-youtube"></i> Bu anda YouTube'da aç</a>`;
+  }
   let body = `
-    <h2 style="font-size:16px;margin-bottom:4px">Frame @ ${d.timestamp}</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
+      <h2 style="font-size:16px;margin:0">Frame @ ${d.timestamp}</h2>${ytAt}
+    </div>
     <div style="color:var(--dim);font-size:12px;margin-bottom:10px">${d.reklam_var ? d.guven + ' güven ile reklam' : 'Reklam yok'}</div>
     <img src="${d.frame_url}" style="width:100%;border-radius:8px;margin-bottom:10px">
     <div style="background:var(--bg3);border-radius:8px;padding:12px">
@@ -3217,6 +3251,7 @@ function goVideo(id)       { navTo('#/video/' + encodeURIComponent(id)); }
 function openBrand(name)   { navTo('#/marka/' + encodeURIComponent(name)); }
 function goBrowse(id)      { navTo('#/sec/' + encodeURIComponent(id)); }
 function goLive(id)        { navTo('#/izle' + (id ? '/' + encodeURIComponent(id) : '')); }
+function goSearch(q)       { navTo('#/ara/' + encodeURIComponent(q)); }
 
 function renderRoute() {
   stopLivePolling();
@@ -3235,6 +3270,7 @@ function renderRoute() {
   else if (seg === 'video' && arg) { state.page = 'video'; state.videoId = arg; state.filter = 'all'; setActiveNav(null); loadVideo(arg); }
   else if (seg === 'marka' && arg) { state.page = 'brand'; state.brand = arg; setActiveNav(null); loadBrandDetail(arg); }
   else if (seg === 'sec' && arg)   { state.page = 'browse'; state.channelId = arg; setActiveNav(null); loadBrowse(arg); }
+  else if (seg === 'ara' && arg)   { state.page = 'search'; setActiveNav(null); loadSearch(arg); }
   else if (seg === 'izle')      { state.page = 'live'; state.channelId = arg || null; _liveBuilt = false; _liveLastDetCount = -1; _liveWaitCount = 0; setActiveNav(null); startLivePolling(); }
   else { state.page = 'home'; setActiveNav('navHome'); loadHome(); }
 
@@ -3242,6 +3278,56 @@ function renderRoute() {
   try { window.scrollTo(0, 0); } catch (e) {}
 }
 window.addEventListener('hashchange', renderRoute);
+
+// ─── Global arama sonuç sayfası ───
+async function loadSearch(q) {
+  $('main').innerHTML = `<div class="page-header"><div><h1>Arama</h1>
+    <div class="subtitle">"${esc(q)}" aranıyor...</div></div></div>
+    <div class="empty-card"><i class="ti ti-loader-2" style="font-size:28px"></i></div>`;
+  let d;
+  try { d = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); }
+  catch (e) { $('main').innerHTML = '<div class="empty-card">Arama hatası</div>'; return; }
+  const total = (d.brands||[]).length + (d.channels||[]).length + (d.videos||[]).length;
+
+  let html = `<div class="page-header"><div>
+      <h1>Arama: "${esc(q)}"</h1>
+      <div class="subtitle">${total} sonuç · marka, kanal ve videolarda arandı</div>
+    </div></div>`;
+
+  if (!total) {
+    html += `<div class="empty-card">"${esc(q)}" için sonuç yok. Farklı bir yazımla dene (Türkçe karakter fark etmez).</div>`;
+    $('main').innerHTML = html; return;
+  }
+
+  if ((d.brands||[]).length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Markalar</div></div>` +
+      d.brands.map(b => `<div class="lb-row" onclick="openBrand('${jsq(b.marka)}')">
+        ${brandAvatar(b.marka)}
+        <div class="lb-name" style="width:auto;flex:1">${esc(b.marka)}</div>
+        <div class="lb-meta">${b.count} reklam</div>
+      </div>`).join('') + `</div>`;
+  }
+  if ((d.channels||[]).length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Kanallar</div></div>` +
+      d.channels.map(c => `<div class="lb-row" onclick="goChannel('${jsq(c.id)}')">
+        <i class="ti ti-broadcast" style="color:var(--accent)"></i>
+        <div class="lb-name" style="width:auto;flex:1">${esc(c.name || c.id)}</div>
+        <i class="ti ti-chevron-right" style="color:var(--dimmer)"></i>
+      </div>`).join('') + `</div>`;
+  }
+  if ((d.videos||[]).length) {
+    html += `<div class="section"><div class="section-head"><div class="section-title-lg">Videolar</div></div>` +
+      d.videos.map(v => `<div class="brand-vid-row" onclick="goVideo('${jsq(v.id)}')">
+        <img class="recent-thumb" style="width:64px;height:36px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
+        <div class="brand-vid-info">
+          <div class="brand-vid-title">${esc(v.title)}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${esc((v.analyzed_at||'').slice(0,10))}</div>
+        </div>
+        <div class="recent-ads">${v.ad_frame_count} reklam</div>
+      </div>`).join('') + `</div>`;
+  }
+  $('main').innerHTML = html;
+}
 
 function closeMobileMenu() { try { toggleSidebar(false); } catch (e) {} }
 function _syncBottomNav(seg) {

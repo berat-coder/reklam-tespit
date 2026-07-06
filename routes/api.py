@@ -425,6 +425,59 @@ def auto_scan_run_now():
     return jsonify({"ok": True, "started": True, **get_status()})
 
 
+# ── Global arama ──────────────────────────────────────────────────────────────
+
+_TR_FOLD = str.maketrans("ÇĞİÖŞÜçğıöşü", "cgiosucgiosu")
+
+
+def _fold(s):
+    """Türkçe-duyarlı küçük harf: 'Fenerbahçe' ↔ 'fenerbahce' eşleşir."""
+    return (s or "").translate(_TR_FOLD).lower()
+
+
+@api_bp.route("/api/search")
+def global_search():
+    """Marka / kanal / video araması (Türkçe karakter duyarlı, kısmi eşleşme)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"q": q, "brands": [], "channels": [], "videos": []})
+    key = _fold(q)
+
+    videos = get_all_videos(completed_only=True)
+    brands = {}      # marka -> toplam sayım
+    chans = {}       # id -> {id, name, avatar}
+    vids_out = []
+
+    for v in videos:
+        if key in _fold(v.get("title", "")) and len(vids_out) < 10:
+            vids_out.append({
+                "id": v["id"], "title": v["title"], "thumbnail": v.get("thumbnail", ""),
+                "channel_name": v.get("channel_name", ""),
+                "ad_frame_count": v.get("ad_frame_count", 0),
+                "analyzed_at": v.get("analyzed_at"),
+            })
+        cn = v.get("channel_name", "") or v.get("channel_id", "")
+        if key in _fold(cn) or key in _fold(v.get("channel_id", "")):
+            # Aynı kanal farklı id'lerle kayıtlı olabilir (@handle vs UC...) →
+            # ada göre tekilleştir
+            chans.setdefault(_fold(cn), {
+                "id": v["channel_id"], "name": cn,
+                "avatar": v.get("channel_avatar", ""),
+            })
+        for m, c in (v.get("brand_counts") or {}).items():
+            if key in _fold(m):
+                brands[m] = brands.get(m, 0) + c
+
+    top_brands = sorted(({"marka": m, "count": c} for m, c in brands.items()),
+                        key=lambda x: -x["count"])[:10]
+    return jsonify({
+        "q": q,
+        "brands": top_brands,
+        "channels": list(chans.values())[:6],
+        "videos": vids_out,
+    })
+
+
 @api_bp.route("/api/daily-report")
 def daily_report():
     return jsonify(get_daily_report())
