@@ -115,7 +115,8 @@ def _apply_alias(name, alias_map):
 
 
 def compute_aggregates(detections, channel_logos, main_sponsors=None, active_only=None,
-                       brand_aliases=None, ignored_brands=None, channel_name=""):
+                       brand_aliases=None, ignored_brands=None, channel_name="",
+                       auto_main_sponsors=None):
     """
     detections: get_detections() biçiminde dict listesi.
     channel_logos: kanalın kendi logoları (reklam sayılmayacak).
@@ -142,7 +143,8 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         ck = _strict_key(channel_name)
         if len(ck) >= 3:
             channel_keys.add(ck)
-    once_counted = set()   # (marka_key, tur) — videoda bir kez sayılanlar
+    auto_keys = {_norm_key(s) for s in (auto_main_sponsors or []) if s}
+    once_counted = set()   # (marka_key, anahtar) — videoda bir kez sayılanlar
     total = len(detections)
 
     type_counts = {}
@@ -175,10 +177,18 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             frame_brands.append(nm)
 
         # ── Kalıcı bindirme: TÜM kareler (reklam olmayanlar dahil), kanal logosu dahil ──
-        # Sadece markaya göre tekilleştir (konum gösterilmiyor).
         for nm in frame_brands:
             o = overlay_acc.setdefault(_norm_key(nm), {"marka": nm, "frames": set()})
             o["frames"].add(idx)
+        # Uzamsal tutarlılık: markanın ekran ÇEYREĞİ ('sağ üst' vb. — Gemini konum
+        # alanı) sayılır → "hep aynı köşede" kalan logo otomatik ana-sponsor sinyali
+        for t in tespitler:
+            nm2 = _norm(al(t.get("marka", "")))
+            kn = _norm(t.get("konum", "")).casefold()
+            if nm2 and kn:
+                o = overlay_acc.setdefault(_norm_key(nm2), {"marka": nm2, "frames": set()})
+                kd = o.setdefault("konumlar", {})
+                kd[kn] = kd.get(kn, 0) + 1
 
         if not d.get("reklam_var"):
             continue
@@ -206,18 +216,25 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
                 pairs = [(rep_tur, konum0)]
             # Yerleşim eleme: forma vb. dışlanan yerleşimler reklam sayılmaz
             pairs = [(t, k) for (t, k) in pairs if t not in excluded_pl]
-            # active_only: pasif (köşe logosu/arka plan/genel) görünümleri ele
-            if bk in active_only_keys:
-                pairs = [(t, k) for (t, k) in pairs if t not in _PASSIVE_TURS]
-            # Videoda-bir-kez türler (Ürün Yerleştirme): ilk görünüm sayılır,
-            # sonrakiler sayılmaz (kanıt karesi olarak kalır — veri şişmesin)
+            # ── Sayım baskılama (videoda BİR KEZ sayılanlar) ──
+            #  • ANA SPONSORUN pasif görünümü (köşe logosu/arka plan): 55 karede
+            #    görünse de = 1 sponsorluk. Spot reklamları (alt bant, tam ekran)
+            #    normal sayılır → dinamik reklam metrikleri kirlenmez.
+            #  • Ürün Yerleştirme: masadaki ürün her karede görünür → videoda 1.
+            # İlk görünüm sayılır; sonrakiler 'repeats'e düşer (kanıt olarak kalır).
             counted, repeats = [], []
             for (t, k) in pairs:
-                if t in _ONCE_PER_VIDEO_TURS:
-                    if (bk, t) in once_counted:
+                if bk in active_only_keys and t in _PASSIVE_TURS:
+                    okey = (bk, "__sponsor_passive__")
+                elif t in _ONCE_PER_VIDEO_TURS:
+                    okey = (bk, t)
+                else:
+                    okey = None
+                if okey is not None:
+                    if okey in once_counted:
                         repeats.append((t, k))
                         continue
-                    once_counted.add((bk, t))
+                    once_counted.add(okey)
                 counted.append((t, k))
             if counted:
                 frame_kept[bk] = {"nm": nm, "pairs": counted}
@@ -310,14 +327,31 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         bk = _norm_key(o["marka"])
         is_logo = bk in logo_keys
         is_sponsor = bk in sponsor_keys
-        if (ratio >= 0.80 and fc >= 3) or is_logo or is_sponsor:
+        # Uzamsal tutarlılık: baskın çeyrek + o çeyrekte kalma oranı
+        kn_counts = o.get("konumlar", {})
+        kn_total = sum(kn_counts.values())
+        dom_kn, dom_n = ("", 0)
+        if kn_counts:
+            dom_kn, dom_n = max(kn_counts.items(), key=lambda x: x[1])
+        consistency = (dom_n / kn_total) if kn_total else 0.0
+        # OTOMATİK ana-sponsor adayı: (a) karelerin ≥%80'inde, VEYA
+        # (b) karelerin ≥%40'ında + hep AYNI çeyrekte (≥%60 tutarlılık) — köşe
+        # logosu deseni. Kanal logosu / zaten-sponsor hariç.
+        auto_candidate = (not is_logo and not is_sponsor and fc >= 3 and (
+            ratio >= 0.80 or
+            (ratio >= 0.40 and kn_total >= 3 and consistency >= 0.60)))
+        if auto_candidate or (ratio >= 0.80 and fc >= 3) or is_logo or is_sponsor:
             persistent.append({
                 "marka": o["marka"],
                 "frame_count": fc,
                 "total_frames": total,
                 "ratio": round(ratio, 3),
+                "dominant_konum": dom_kn,
+                "konum_consistency": round(consistency, 2),
+                "auto_candidate": auto_candidate,
                 "is_channel_logo": is_logo,
                 "is_main_sponsor": is_sponsor,
+                "is_auto_main_sponsor": bk in auto_keys,
                 "is_active_only": bk in active_only_keys,
             })
     persistent.sort(key=lambda x: x["ratio"], reverse=True)
@@ -339,6 +373,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             "last_ts": b["last_ts"], "last_seconds": b["last_seconds"],
             "max_guven": b["max_guven"],
             "is_main_sponsor": _norm_key(b["marka"]) in sponsor_keys,
+            "is_auto_main_sponsor": _norm_key(b["marka"]) in auto_keys,
             "is_active_only": _norm_key(b["marka"]) in active_only_keys,
         })
     # Ana sponsorlar en üstte, sonra görünüm sayısına göre
@@ -371,7 +406,9 @@ def auto_sponsor_candidates(agg, threshold, existing_sponsors=None):
         k = _norm_key(o.get("marka", ""))
         if o.get("is_channel_logo") or k in existing or k in seen:
             continue
-        if o.get("ratio", 0) >= 0.80 and o.get("frame_count", 0) >= 3:
+        # Yeni sinyal: uzamsal-zamansal aday (≥%40 kare + aynı çeyrek) veya ≥%80
+        if o.get("auto_candidate") or (o.get("ratio", 0) >= 0.80
+                                       and o.get("frame_count", 0) >= 3):
             out.append(o["marka"]); seen.add(k)
     return out
 

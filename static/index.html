@@ -2593,6 +2593,7 @@ async function loadDashboard() {
       <div class="stat-tile red"><div class="stat-tile-num">${t.ad_frames||0}</div><div class="stat-tile-lbl">Toplam Reklam Karesi</div></div>
       <div class="stat-tile blue"><div class="stat-tile-num">${t.brands||0}</div><div class="stat-tile-lbl">Benzersiz Marka</div></div>
     </div>
+    ${renderSponsorMatrix(d.sponsor_matrix || [])}
     <div class="section">
       <div class="section-head">
         <div class="section-title-lg">En Çok Reklam Veren Markalar</div>
@@ -2623,6 +2624,29 @@ async function loadDashboard() {
 
   $('main').innerHTML = html;
   renderBrandLeaderboard();
+}
+
+// ── Aktif Ana Sponsorluk Matrisi: marka → ana sponsoru olduğu kanallar ──
+// Uzun vadeli 'ekran mülkiyeti' katmanı; alttaki grafikler baskılanmış (temiz)
+// dinamik spot-reklam verisini gösterir.
+function renderSponsorMatrix(sm) {
+  if (!sm.length) return '';
+  return `<div class="section" style="border-left:3px solid var(--amber)">
+    <div class="section-head">
+      <div class="section-title-lg"><i class="ti ti-trophy" style="color:var(--amber)"></i> Aktif Ana Sponsorluklar</div>
+      <div class="report-meta">${sm.length} marka · kanal bazında kalıcı sponsorluk (sayımlarda videoda 1)</div>
+    </div>
+    ${sm.map(s => `
+      <div class="lb-row" onclick="openBrand('${jsq(s.marka)}')">
+        ${brandAvatar(s.marka)}
+        <div class="lb-name" style="width:130px">${esc(s.marka)}</div>
+        <div class="lb-meta" style="flex:1;text-align:left;white-space:normal">
+          ${s.channels.map(c => esc(c.name)).join(' · ')}
+        </div>
+        ${s.auto ? '<span class="role-badge" title="Uzamsal-zamansal analizle otomatik">oto</span>' : ''}
+        <div class="lb-meta"><strong>${s.channels.length} kanal</strong></div>
+      </div>`).join('')}
+  </div>`;
 }
 
 function renderBrandLeaderboard() {
@@ -2799,11 +2823,47 @@ async function loadVideo(id) {
   // Sürekli ekran öğeleri (kalıcı bindirmeler)
   const overlays = v.persistent_overlays || [];
   window._overlays = overlays;
-  if (overlays.length > 0) {
+  window._sponsorProof = {};
+  const report0 = v.brand_report || [];
+  const heroPairs = overlays.map((o, i) => [o, i]).filter(([o]) => o.is_main_sponsor);
+  const otherPairs = overlays.map((o, i) => [o, i]).filter(([o]) => !o.is_main_sponsor);
+
+  // ── Ana Sponsor akordiyonu: 55 ayrı kart yerine TEK temiz bileşen.
+  //    Kanıt kareleri varsayılan GİZLİ (tıkla → aç). Sayımda videoda 1.
+  for (const [o, i] of heroPairs) {
+    const rb = report0.find(b => (b.marka || '').toLowerCase() === (o.marka || '').toLowerCase());
+    const frames = (rb && rb.frames) || [];
+    window._sponsorProof[i] = frames;
+    const pct = Math.round((o.ratio || 0) * 100);
+    const src = o.is_auto_main_sponsor
+      ? '<span class="role-badge" title="Uzamsal-zamansal analizle otomatik tespit">otomatik tespit</span>'
+      : '<span class="role-badge viewer">manuel kural</span>';
+    html += `<div class="section" style="border-left:3px solid var(--amber)">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <i class="ti ti-trophy" style="font-size:22px;color:var(--amber);flex-shrink:0"></i>
+        <div style="flex:1;min-width:220px">
+          <div style="font-weight:600;font-size:14px">Ana Sponsor Doğrulandı: ${esc(o.marka)} ${src}</div>
+          <div style="font-size:12px;color:var(--dim);margin-top:2px">
+            Video boyunca ekranda — karelerin %${pct}'i${o.dominant_konum ? ' · hep ' + esc(o.dominant_konum) : ''}
+            · <strong>sayımda videoda 1 kez</strong> (spot reklamları ayrı sayılır)
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${frames.length ? `<button class="btn sm" onclick="toggleSponsorProof(${i})" id="spBtn-${i}">
+            <i class="ti ti-photo"></i> Kanıt kareleri (${frames.length})</button>` : ''}
+          <button class="btn sm admin-only" onclick="overlayFlag(${i},'main_sponsor',false)">
+            <i class="ti ti-arrow-back-up"></i> Geri al</button>
+        </div>
+      </div>
+      <div id="sponsorProof-${i}" style="display:none;margin-top:12px;flex-wrap:wrap;gap:8px"></div>
+    </div>`;
+  }
+
+  if (otherPairs.length > 0) {
     html += `<div class="section">
       <div class="section-head"><div class="section-title-lg">Sürekli Ekran Öğeleri</div></div>
       <div class="overlay-list">
-        ${overlays.map((o, i) => overlayRow(o, i)).join('')}
+        ${otherPairs.map(([o, i]) => overlayRow(o, i)).join('')}
       </div>
     </div>`;
   }
@@ -2918,6 +2978,20 @@ function overlayRow(o, i) {
 function overlayFlag(i, flag, value) {
   const o = (window._overlays || [])[i];
   if (o) brandFlag(o.marka, flag, value);
+}
+
+// Ana sponsor kanıt karelerini aç/kapat (varsayılan gizli — görsel kirlilik olmasın)
+function toggleSponsorProof(i) {
+  const box = $('sponsorProof-' + i);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  const frames = (window._sponsorProof || {})[i] || [];
+  box.innerHTML = frames.map(f => `
+    <div class="bframe" onclick="showFrameDetail(${f.index})">
+      <img src="${f.frame_url}" loading="lazy" onerror="this.style.opacity=0.25">
+      <span class="bframe-ts">${esc(f.timestamp)}</span>
+    </div>`).join('') || '<div style="color:var(--dim);font-size:12px">Kare yok</div>';
+  box.style.display = 'flex';
 }
 
 function jsq(s) { return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }

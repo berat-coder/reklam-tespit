@@ -669,11 +669,13 @@ def _analyze_video_core(
             "b64": _b64_file(frames_data[ci]["path"]),
         } for ci in chunk]
 
-        # Kanalın kendi adı da 'reklam sayma' listesinde (prompt'a gider)
+        # Kanalın kendi adı da 'reklam sayma' listesinde (prompt'a gider);
+        # bilinen ana sponsorlar bağlam olarak enjekte edilir (kural → prompt)
         prompt_logos = list(dict.fromkeys(
             ([channel_name] if channel_name else []) + channel_logos))
         batch_res = gemini_analyze_batch(api_key, batch_frames,
-                                          prompt_logos, desc_brands)
+                                          prompt_logos, desc_brands,
+                                          main_sponsors=main_sponsors)
         # ── Günlük kota (RPD) doldu mu? Saatlerce 429 beklemek yerine HIZLI dur ──
         if any((r or {}).get("ozet") == "QUOTA_DAILY" for r in batch_res.values()):
             status("Gemini GÜNLÜK kota doldu — analiz durduruldu, yarın devam")
@@ -718,7 +720,8 @@ def _analyze_video_core(
     # ── Özet ve kayıt (ortak agregat modülü, kanal bayrakları + öğrenilen kurallar) ──
     agg = compute_aggregates(detections, channel_logos, main_sponsors, active_only,
                              brand_aliases=brand_aliases, ignored_brands=ignored_brands,
-                             channel_name=channel_name or "")
+                             channel_name=channel_name or "",
+                             auto_main_sponsors=ch.get("auto_main_sponsors", []))
 
     upsert_video(
         video_id=video_id,
@@ -758,6 +761,7 @@ def _analyze_video_core(
         for m in auto:
             set_channel_brand_flag(channel_id, m, "main_sponsor", True)
             set_channel_brand_flag(channel_id, m, "active_only", True)
+            set_channel_brand_flag(channel_id, m, "auto_main_sponsor", True)  # rozet
         status(f"Otomatik ana sponsor: {', '.join(auto)}")
         agg = recompute_video_aggregates(video_id) or agg  # bayraklarla yeniden hesapla
 

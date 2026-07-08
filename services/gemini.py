@@ -258,10 +258,13 @@ def _empty_result(ozet="", skipped=False):
     return r
 
 
-def gemini_analyze_batch(api_key, frames, channel_logos, known_brands):
+def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
+                         main_sponsors=None):
     """
     Birden fazla frame'i TEK Gemini çağrısında analiz eder.
     frames: [{"index": int, "timestamp": str, "b64": str}, ...]
+    main_sponsors: kanalın bilinen ana sponsorları → prompt'a bağlam enjekte
+    edilir (kalıcı logo ↔ spot reklam ayrımı netleşir).
     Döner: {index: result_dict} — eksik index'ler _skipped fallback alır.
     """
     if not frames:
@@ -270,6 +273,13 @@ def gemini_analyze_batch(api_key, frames, channel_logos, known_brands):
     ctx = ""
     if channel_logos:
         ctx += f"\n🚫 KANALIN KENDİ LOGOLARI (REKLAM SAYMA): {', '.join(channel_logos[:10])}"
+    if main_sponsors:
+        ctx += (f"\n🏆 BAĞLAM: Bu kanalın RESMİ ANA SPONSORU: "
+                f"{', '.join(main_sponsors[:5])}. Bu markanın logosu yayın boyunca "
+                f"ekranda SÜREKLİ durur. Gördüğünde konumunu yaz ama türünü doğru "
+                f"ver: sabit köşe logosu ise tur='Köşe Banner'; SADECE kısa süreli "
+                f"spot reklamı (alt bant, tam ekran, ürün tanıtımı) ise o türü yaz. "
+                f"Kalıcı logoyu spot reklamla KARIŞTIRMA.")
     if known_brands:
         ctx += f"\n📌 Video açıklamasında geçen markalar: {', '.join(known_brands[:10])}"
 

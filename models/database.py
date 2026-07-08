@@ -107,6 +107,7 @@ _MIGRATIONS = [
     ("videos", "persistent_overlays", "TEXT NOT NULL DEFAULT '[]'"),
     ("detections", "manual_clean", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "role", "TEXT NOT NULL DEFAULT 'user'"),
+    ("channels", "auto_main_sponsors", "TEXT NOT NULL DEFAULT '[]'"),
     ("live_seen", "status", "TEXT NOT NULL DEFAULT 'pending'"),
     ("live_seen", "attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("live_seen", "last_attempt", "TEXT"),
@@ -551,6 +552,7 @@ _FLAG_COL = {
     "channel_logo": "channel_logos",
     "main_sponsor": "main_sponsors",
     "active_only": "sponsor_active_only",
+    "auto_main_sponsor": "auto_main_sponsors",  # otomatik tespit kaydı (rozet için)
 }
 
 
@@ -566,7 +568,8 @@ def set_channel_brand_flag(ch_id, marka, flag, value):
         raise ValueError("marka gerekli")
     ch = get_channel(ch_id) or {}
     field = {"channel_logos": "channel_logos", "main_sponsors": "main_sponsors",
-             "sponsor_active_only": "sponsor_active_only"}[col]
+             "sponsor_active_only": "sponsor_active_only",
+             "auto_main_sponsors": "auto_main_sponsors"}[col]
     cur = ch.get(field, [])
     key = marka.casefold()
     others = [m for m in cur if m.casefold() != key]
@@ -954,7 +957,8 @@ def recompute_video_aggregates(video_id):
                              ch.get("sponsor_active_only", []),
                              brand_aliases=ch.get("brand_aliases", {}),
                              ignored_brands=ch.get("ignored_brands", []),
-                             channel_name=ch.get("name", ""))
+                             channel_name=ch.get("name", ""),
+                             auto_main_sponsors=ch.get("auto_main_sponsors", []))
     upsert_video(
         video_id=video_id,
         channel_id=v["channel_id"],
@@ -1003,6 +1007,38 @@ def get_all_videos(completed_only=True):
             d["channel_avatar"] = r["channel_avatar"] or ""
             out.append(d)
         return out
+
+
+def get_sponsor_matrix():
+    """Marka → ana sponsoru olduğu kanallar (kanallar-arası sponsorluk matrisi).
+    Örn: NESİNE → [NutSpor, Vole] (2 kanal). 'auto' = en az bir kanalda otomatik
+    tespit edildi (uzamsal-zamansal). En çok kanala sahip marka önce."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, main_sponsors, auto_main_sponsors FROM channels"
+        ).fetchall()
+    import re as _re
+    _tr = str.maketrans("çğıöşü", "cgiosu")
+    def _sk(s):
+        return _re.sub(r"[^a-z0-9]", "", (s or "").casefold().translate(_tr))
+    acc = {}
+    for r in rows:
+        d = dict(r)
+        cname = d.get("name") or d["id"]
+        autos = {(x or "").casefold()
+                 for x in json.loads(_col(d, "auto_main_sponsors", None) or "[]")}
+        for m in json.loads(d.get("main_sponsors") or "[]"):
+            # Eski hatalı kayıtlar: kanalın KENDİ ADI sponsor işaretlenmiş olabilir
+            # ('NEO SPOR' → NEO Spor kanalı) — matrisi kirletmesin, atla.
+            if _sk(m) and (_sk(m) == _sk(cname) or _sk(m) == _sk(d["id"])):
+                continue
+            e = acc.setdefault(m.casefold(), {"marka": m, "channels": [], "auto": False})
+            # Aynı kanal iki kimlikle kayıtlıysa (@handle vs UC...) ada göre tekille
+            if not any(c["name"].casefold() == cname.casefold() for c in e["channels"]):
+                e["channels"].append({"id": d["id"], "name": cname})
+            if m.casefold() in autos:
+                e["auto"] = True
+    return sorted(acc.values(), key=lambda x: -len(x["channels"]))
 
 
 def get_dashboard_data(since=None):
@@ -1161,6 +1197,7 @@ def _ch(row):
         "channel_logos": json.loads(d.get("channel_logos") or "[]"),
         "main_sponsors": json.loads(_col(d, "main_sponsors", None) or "[]"),
         "sponsor_active_only": json.loads(_col(d, "sponsor_active_only", None) or "[]"),
+        "auto_main_sponsors": json.loads(_col(d, "auto_main_sponsors", None) or "[]"),
         "brand_aliases": json.loads(_col(d, "brand_aliases", None) or "{}"),
         "ignored_brands": json.loads(_col(d, "ignored_brands", None) or "[]"),
         "rule_state": json.loads(_col(d, "rule_state", None) or "{}"),

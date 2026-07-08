@@ -314,6 +314,7 @@ def maintenance_auto_sponsors():
         for m in cands:
             set_channel_brand_flag(v["channel_id"], m, "main_sponsor", True)
             set_channel_brand_flag(v["channel_id"], m, "active_only", True)
+            set_channel_brand_flag(v["channel_id"], m, "auto_main_sponsor", True)
             flagged.setdefault(v["channel_id"], [])
             if m not in flagged[v["channel_id"]]:
                 flagged[v["channel_id"]].append(m)
@@ -486,7 +487,10 @@ def daily_report():
 
 @api_bp.route("/api/dashboard")
 def dashboard():
-    return jsonify(get_dashboard_data(since=_since_from_days()))
+    from models.database import get_sponsor_matrix
+    data = get_dashboard_data(since=_since_from_days())
+    data["sponsor_matrix"] = get_sponsor_matrix()
+    return jsonify(data)
 
 
 @api_bp.route("/api/brand/<path:name>")
@@ -663,7 +667,8 @@ def video_detail(video_id):
                              ch.get("sponsor_active_only", []),
                              brand_aliases=ch.get("brand_aliases", {}),
                              ignored_brands=ch.get("ignored_brands", []),
-                             channel_name=ch.get("name", ""))
+                             channel_name=ch.get("name", ""),
+                             auto_main_sponsors=ch.get("auto_main_sponsors", []))
     return jsonify({
         "video": {
             **v,
@@ -738,8 +743,10 @@ def brand_flag(video_id):
         set_channel_brand_flag(v["channel_id"], marka, flag, value)
         # Ana sponsor yapılınca "sadece gerçek reklamları say" (köşe logosunu
         # sayma / active_only) da otomatik işaretlensin; geri alınınca kalksın.
+        # Manuel işlem otomatik-tespit rozetini temizler (artık kullanıcı kararı).
         if flag == "main_sponsor":
             set_channel_brand_flag(v["channel_id"], marka, "active_only", value)
+            set_channel_brand_flag(v["channel_id"], marka, "auto_main_sponsor", False)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     agg = recompute_video_aggregates(video_id)
