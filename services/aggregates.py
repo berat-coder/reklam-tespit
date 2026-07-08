@@ -44,6 +44,21 @@ def _norm_key(s):
     return _norm(s).casefold()
 
 
+_TR_FOLD = str.maketrans("çğıöşü", "cgiosu")
+
+
+def _strict_key(s):
+    """Katı karşılaştırma anahtarı: Türkçe katla + tüm işaret/boşlukları at.
+    'Eski Açık' ↔ 'eskiacik', '343 Digital' ↔ '343digital' eşleşir."""
+    return re.sub(r"[^a-z0-9]", "", _norm(s).casefold().translate(_TR_FOLD))
+
+
+# Videoda BİR KEZ sayılan yerleşimler: masadaki ürün (ör. kahve bardağı) her
+# karede görünür — 50-60 kez saymak veriyi şişirir. Marka başına 1 sayılır,
+# diğer kareler kanıt olarak saklanır ama sayıma girmez.
+_ONCE_PER_VIDEO_TURS = {"Ürün Yerleştirme"}
+
+
 # Global spor-kulüp/lig ayıklama listesi (config'ten, 30s cache). Kulüp armaları
 # (Fenerbahçe, Bayern, UEFA…) reklam sayılmasın diye. UI'dan düzenlenebilir.
 _GLOBAL_IGNORE_CACHE = {"ts": 0.0, "keys": frozenset()}
@@ -100,7 +115,7 @@ def _apply_alias(name, alias_map):
 
 
 def compute_aggregates(detections, channel_logos, main_sponsors=None, active_only=None,
-                       brand_aliases=None, ignored_brands=None):
+                       brand_aliases=None, ignored_brands=None, channel_name=""):
     """
     detections: get_detections() biçiminde dict listesi.
     channel_logos: kanalın kendi logoları (reklam sayılmayacak).
@@ -121,6 +136,13 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     ignored_keys |= _global_ignore_keys()      # kulüp arması/lig/milli takım → reklam değil
     excluded_keys = logo_keys | ignored_keys  # ad sayımından düşenler
     excluded_pl = _excluded_placements()       # reklam sayılmayan yerleşimler (ör. Forma)
+    # Kanalın KENDİ ADI reklam değildir ('Eski Açık', '343 Digital'...) — katı eşleşme
+    channel_keys = set()
+    if channel_name:
+        ck = _strict_key(channel_name)
+        if len(ck) >= 3:
+            channel_keys.add(ck)
+    once_counted = set()   # (marka_key, tur) — videoda bir kez sayılanlar
     total = len(detections)
 
     type_counts = {}
@@ -161,15 +183,19 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         if not d.get("reklam_var"):
             continue
 
-        # Kanal logosu / yok-sayılan marka olmayan markalar = gerçek reklam markaları (#1)
-        ad_brands = [nm for nm in frame_brands if _norm_key(nm) not in excluded_keys]
+        # Kanal logosu / yok-sayılan / kanal adı olmayan markalar = gerçek reklamlar
+        def _is_excluded(name):
+            return (_norm_key(name) in excluded_keys
+                    or _strict_key(name) in channel_keys)
+        ad_brands = [nm for nm in frame_brands if not _is_excluded(nm)]
         ad_tespitler = [t for t in tespitler
-                        if _norm_key(al(t.get("marka", ""))) not in excluded_keys]
+                        if not _is_excluded(al(t.get("marka", "")))]
         rep_turs = [_canonical_tur(t.get("tur", "")) for t in ad_tespitler]
         rep_tur = rep_turs[0] if rep_turs else "Reklam"
 
         # Her marka için bu karedeki (tür, konum) çiftleri — active_only filtresiyle
-        frame_kept = {}   # marka_key -> {"nm":.., "pairs":[(tur,konum)]}
+        frame_kept = {}    # marka_key -> {"nm":.., "pairs":[(tur,konum)]} (SAYILAN)
+        repeat_only = {}   # tekrar eden ürün-yerleştirme: sayılmaz, kanıt olarak eklenir
         for nm in ad_brands:
             bk = _norm_key(nm)
             matched = [t for t in ad_tespitler if _norm_key(al(t.get("marka", ""))) == bk]
@@ -183,8 +209,38 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             # active_only: pasif (köşe logosu/arka plan/genel) görünümleri ele
             if bk in active_only_keys:
                 pairs = [(t, k) for (t, k) in pairs if t not in _PASSIVE_TURS]
-            if pairs:
-                frame_kept[bk] = {"nm": nm, "pairs": pairs}
+            # Videoda-bir-kez türler (Ürün Yerleştirme): ilk görünüm sayılır,
+            # sonrakiler sayılmaz (kanıt karesi olarak kalır — veri şişmesin)
+            counted, repeats = [], []
+            for (t, k) in pairs:
+                if t in _ONCE_PER_VIDEO_TURS:
+                    if (bk, t) in once_counted:
+                        repeats.append((t, k))
+                        continue
+                    once_counted.add((bk, t))
+                counted.append((t, k))
+            if counted:
+                frame_kept[bk] = {"nm": nm, "pairs": counted}
+            elif repeats:
+                repeat_only[bk] = {"nm": nm, "pairs": repeats}
+
+        # Tekrar eden yerleştirmelerin karesini KANITA ekle (sayım artmaz,
+        # görünürlük aralığı — first/last — gerçek kalsın)
+        for bk, info in repeat_only.items():
+            b = brand_acc.get(bk)
+            if b is None:
+                continue
+            fr = b["frames"].get(idx)
+            if fr is None:
+                fr = b["frames"][idx] = {
+                    "index": idx, "timestamp": ts, "seconds": secs,
+                    "frame_url": d.get("frame_url", ""), "guven": guven, "turler": [],
+                }
+            for tur, _k in info["pairs"]:
+                if tur not in fr["turler"]:
+                    fr["turler"].append(tur)
+            if secs > b["last_seconds"]:
+                b["last_seconds"], b["last_ts"] = secs, ts
 
         # Markasız ama aktif türde reklam sinyali (geçiş karesi vb.)
         brandless_active = any(

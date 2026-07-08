@@ -180,11 +180,14 @@ def _detection_rules(channel_logos):
 - Bahis, oyun, bonus, hoşgeldin paketi reklamları
 - ANİDEN BELİREN / hareketli / animasyonlu pop-up reklamlar
 - Stüdyoda/masada/ekranda KASITLI YERLEŞTİRİLMİŞ sponsor logosu veya ürün
-  (ürün yerleştirme) — konuşmacının elinde tuttuğu markalı ürün dahil
+  (ürün yerleştirme) — konuşmacının elinde tuttuğu markalı ürün dahil.
+  Masadaki ürün (ör. kahve bardağı) her karede görünse bile tur her zaman
+  "Ürün Yerleştirme" olmalı — "Alt Bant"/"Köşe Banner" ile KARIŞTIRMA.
 - Saha kenarı / LED reklam panoları, sahaya boyanmış reklam
 
 🚫 REKLAM SAYMA:
-- Kanalın kendi logosu (kanal logosu listesi: {logos})
+- KANALIN KENDİ ADI ve logosu (bu liste: {logos}) — kanal adının yazılı/logolu
+  her görünümü kanal kimliğidir, ASLA reklam veya marka olarak YAZMA
 - ⚽ OYUNCUNUN GİYDİĞİ formanın/şortun/çorabın üzerindeki SPONSOR markası
   (forma göğüs/kol sponsoru) — bu maç görüntüsünde sürekli ekranda olur, REKLAM
   SAYMA. (Yazman gerekiyorsa SADECE tespit olarak tur="Forma" ver, "markalar"

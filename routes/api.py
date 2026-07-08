@@ -307,7 +307,8 @@ def maintenance_auto_sponsors():
             get_detections(v["id"]), ch.get("channel_logos", []),
             ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
             brand_aliases=ch.get("brand_aliases", {}),
-            ignored_brands=ch.get("ignored_brands", []))
+            ignored_brands=ch.get("ignored_brands", []),
+            channel_name=ch.get("name", ""))
         cands = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD,
                                         ch.get("main_sponsors", []))
         for m in cands:
@@ -525,7 +526,8 @@ def export_video_csv(video_id):
     agg = compute_aggregates(get_detections(video_id), ch.get("channel_logos", []),
                              ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
                              brand_aliases=ch.get("brand_aliases", {}),
-                             ignored_brands=ch.get("ignored_brands", []))
+                             ignored_brands=ch.get("ignored_brands", []),
+                             channel_name=ch.get("name", ""))
     rows = [[
         b["marka"], b["appearances"], b["frame_count"],
         " / ".join(f"{t}:{n}" for t, n in (b.get("tur_counts") or {}).items()),
@@ -660,7 +662,8 @@ def video_detail(video_id):
                              ch.get("main_sponsors", []),
                              ch.get("sponsor_active_only", []),
                              brand_aliases=ch.get("brand_aliases", {}),
-                             ignored_brands=ch.get("ignored_brands", []))
+                             ignored_brands=ch.get("ignored_brands", []),
+                             channel_name=ch.get("name", ""))
     return jsonify({
         "video": {
             **v,

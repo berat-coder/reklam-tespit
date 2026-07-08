@@ -1426,7 +1426,8 @@ async function loadHome() {
   html += `<div class="section report-hero">
     <div class="section-head">
       <div class="section-title-lg">${useToday ? 'Bugün Öne Çıkan Markalar' : 'Son 7 Günün Öne Çıkan Markaları'}</div>
-      <div class="report-meta">${src.video_count} video · ${src.ad_frames} reklam</div>
+      <div class="report-meta">${src.video_count} video · ${src.ad_frames} reklam
+        · <span style="cursor:pointer;color:var(--accent);font-weight:600" onclick="goDailyBrands()">Tüm markalar →</span></div>
     </div>`;
   if (!brands.length) {
     html += `<div class="empty-card" style="border:none;background:transparent">
@@ -3303,6 +3304,7 @@ function openBrand(name)   { navTo('#/marka/' + encodeURIComponent(name)); }
 function goBrowse(id)      { navTo('#/sec/' + encodeURIComponent(id)); }
 function goLive(id)        { navTo('#/izle' + (id ? '/' + encodeURIComponent(id) : '')); }
 function goSearch(q)       { navTo('#/ara/' + encodeURIComponent(q)); }
+function goDailyBrands()   { navTo('#/gun'); }
 
 function renderRoute() {
   stopLivePolling();
@@ -3322,6 +3324,7 @@ function renderRoute() {
   else if (seg === 'marka' && arg) { state.page = 'brand'; state.brand = arg; setActiveNav(null); loadBrandDetail(arg); }
   else if (seg === 'sec' && arg)   { state.page = 'browse'; state.channelId = arg; setActiveNav(null); loadBrowse(arg); }
   else if (seg === 'ara' && arg)   { state.page = 'search'; setActiveNav(null); loadSearch(arg); }
+  else if (seg === 'gun')          { state.page = 'daily'; setActiveNav(null); loadDailyBrands(); }
   else if (seg === 'izle')      { state.page = 'live'; state.channelId = arg || null; _liveBuilt = false; _liveLastDetCount = -1; _liveWaitCount = 0; setActiveNav(null); startLivePolling(); }
   else { state.page = 'home'; setActiveNav('navHome'); loadHome(); }
 
@@ -3329,6 +3332,52 @@ function renderRoute() {
   try { window.scrollTo(0, 0); } catch (e) {}
 }
 window.addEventListener('hashchange', renderRoute);
+
+// ─── Günün Markaları (tam liste) ───
+function _brandRows(brands, onclickFn) {
+  if (!brands.length) return '<div class="empty-card" style="border:none;background:transparent">Bu aralıkta marka yok.</div>';
+  const max = Math.max(...brands.map(b => b.count));
+  return brands.map((b, i) => `
+    <div class="report-brand" onclick="openBrand('${jsq(b.marka)}')">
+      <span class="rb-rank">${i + 1}</span>
+      ${brandAvatar(b.marka)}
+      <span class="rb-name">${esc(b.marka)}</span>
+      <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((b.count/max)*100)}%"></span></span>
+      <span class="rb-count">${b.count}</span>
+    </div>`).join('');
+}
+
+async function loadDailyBrands() {
+  let d;
+  try { d = await (await fetch('/api/daily-report')).json(); }
+  catch (e) { $('main').innerHTML = '<div class="empty-card">Yüklenemedi</div>'; return; }
+  const today = d.today || {video_count: 0, ad_frames: 0, top_brands: []};
+  const week = d.week || {video_count: 0, ad_frames: 0, top_brands: []};
+  const dateStr = new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'});
+
+  let html = `<div class="page-header"><div>
+      <h1>Günün Markaları</h1>
+      <div class="subtitle">${esc(dateStr)} · o gün görülen TÜM markalar</div>
+    </div></div>`;
+
+  html += `<div class="section">
+    <div class="section-head">
+      <div class="section-title-lg">Bugün</div>
+      <div class="report-meta">${today.video_count} video · ${today.ad_frames} reklam · ${(today.top_brands||[]).length} marka</div>
+    </div>
+    <div class="report-brands">${_brandRows(today.top_brands || [])}</div>
+  </div>`;
+
+  html += `<div class="section">
+    <div class="section-head">
+      <div class="section-title-lg">Son 7 Gün</div>
+      <div class="report-meta">${week.video_count} video · ${week.ad_frames} reklam · ${(week.top_brands||[]).length} marka</div>
+    </div>
+    <div class="report-brands">${_brandRows(week.top_brands || [])}</div>
+  </div>`;
+
+  $('main').innerHTML = html;
+}
 
 // ─── Global arama sonuç sayfası ───
 async function loadSearch(q) {

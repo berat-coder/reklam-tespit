@@ -953,7 +953,8 @@ def recompute_video_aggregates(video_id):
                              ch.get("main_sponsors", []),
                              ch.get("sponsor_active_only", []),
                              brand_aliases=ch.get("brand_aliases", {}),
-                             ignored_brands=ch.get("ignored_brands", []))
+                             ignored_brands=ch.get("ignored_brands", []),
+                             channel_name=ch.get("name", ""))
     upsert_video(
         video_id=video_id,
         channel_id=v["channel_id"],
