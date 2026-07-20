@@ -21,4 +21,4 @@ EXPOSE 5001
 # Varsayılan komut web (worker docker-compose'da override edilir).
 # Shell form → $PORT genişler: Railway PORT'u set eder; compose'da PORT yoksa 5001.
 # Tek worker + thread = Redis'siz thread-kuyruğu tutarlı çalışır.
-CMD gunicorn app:app --bind "0.0.0.0:${PORT:-5001}" --workers 1 --threads 8 --timeout 300 --graceful-timeout 30
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-5001} --workers 1 --threads 8 --timeout 300 --graceful-timeout 30"]
