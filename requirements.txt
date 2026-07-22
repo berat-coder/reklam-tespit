@@ -1,5 +1,8 @@
 flask==3.0.3
 yt-dlp
+# YouTube PO Token eklentisi — datacenter IP'lerinde (Railway) video formatı
+# çekebilmek için gerekli. Token'ları YT_POT_BASE_URL'deki bgutil servisinden alır.
+bgutil-ytdlp-pot-provider
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 requests==2.32.3

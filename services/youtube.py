@@ -34,8 +34,24 @@ def get_ydl_opts(extra=None):
     cp = _cookie_file_path()
     if cp:
         opts["cookiefile"] = cp
+
+    # extractor_args'ı iki kaynaktan birleştir: (1) PO token servisi (varsa),
+    # (2) çağıranın verdiği (ör. youtube.player_client). Düz .update() ikisini
+    # birbirine ezerdi; o yüzden anahtar-anahtar birleştiriyoruz.
+    ea = {}
+    pot = os.environ.get("YT_POT_BASE_URL", "").strip()
+    if pot:
+        # bgutil PO token provider (datacenter IP → YouTube video formatı için şart)
+        ea["youtubepot-bgutilhttp"] = {"base_url": [pot]}
+
     if extra:
+        extra = dict(extra)
+        for k, v in (extra.pop("extractor_args", None) or {}).items():
+            ea[k] = v
         opts.update(extra)
+
+    if ea:
+        opts["extractor_args"] = ea
     return opts
 
 
