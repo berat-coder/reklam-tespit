@@ -510,46 +510,59 @@ def _analyze_video_core(
 
     # 3. Stream URL — düşük çözünürlük yeterli (640px'e küçültüyoruz) ve çok daha
     #    hızlı decode olur. H.264 mp4 tercih → AV1/VP9'dan kat kat hızlı.
+    #
+    #    Datacenter IP'lerde (Railway) YouTube 'web' client'ı çoğu zaman format
+    #    döndürmüyor (PO token ister) → "Stream URL bulunamadı". Cookie'li farklı
+    #    player client'lar (tv/web_safari/mweb/ios) bu engeli genelde aşar.
+    #    Sırayla dene, ilk format vereni kullan; hepsi başarısızsa GERÇEK hatayı
+    #    logla (kör "bulunamadı" yerine).
     status(f"Stream alınıyor: {title[:40]}")
-    stream_url = None
-    try:
-        with YoutubeDL(get_ydl_opts({
-            "skip_download": True,
-            "noplaylist": True,
-            "ignore_no_formats_error": True,
-            "format": (
-                "bv*[height<=480][vcodec^=avc]/b[height<=480][vcodec^=avc]/"
-                "bv*[height<=480]/b[height<=480]/worst[vcodec!=none]/worst"
-            ),
-        })) as ydl:
-            si = ydl.extract_info(url, download=False)
+    _stream_fmt = (
+        "bv*[height<=480][vcodec^=avc]/b[height<=480][vcodec^=avc]/"
+        "bv*[height<=480]/b[height<=480]/worst[vcodec!=none]/worst"
+    )
 
+    def _pick_stream_url(si):
+        if not si:
+            return None
         # Tek URL'li format (mp4, HLS)
-        stream_url = si.get("url") if si else None
-
+        if si.get("url"):
+            return si["url"]
         # Birleşik format (DASH: ayrı video+audio) → video parçasını al
-        if not stream_url and si:
-            for rf in (si.get("requested_formats") or []):
-                if rf.get("vcodec") not in (None, "none"):
-                    stream_url = rf["url"]
-                    break
+        for rf in (si.get("requested_formats") or []):
+            if rf.get("vcodec") not in (None, "none") and rf.get("url"):
+                return rf["url"]
+        # Format listesinden en iyi video URL'i
+        for f in reversed(si.get("formats") or []):
+            if f.get("url") and f.get("vcodec") not in (None, "none"):
+                return f["url"]
+        return None
 
-        # Hâlâ yoksa format listesinden en iyi video URL'ini seç
-        if not stream_url and si:
-            for f in reversed(si.get("formats") or []):
-                if f.get("url") and f.get("vcodec") not in (None, "none"):
-                    stream_url = f["url"]
-                    break
-    except Exception as e:
-        status(f"Stream hatası: {e}")
-        _record_fail(e, video_id)
-        on_set_live(status="error", message=str(e), progress=0)
-        return
+    stream_url = None
+    _last_err = None
+    for _clients in (["tv"], ["web_safari"], ["mweb"], ["ios"], ["web"]):
+        try:
+            with YoutubeDL(get_ydl_opts({
+                "skip_download": True,
+                "noplaylist": True,
+                "format": _stream_fmt,
+                "extractor_args": {"youtube": {"player_client": _clients}},
+            })) as ydl:
+                si = ydl.extract_info(url, download=False)
+            stream_url = _pick_stream_url(si)
+            if stream_url:
+                status(f"Stream OK (client={_clients[0]})")
+                break
+            _last_err = f"{_clients[0]}: oynatılabilir format yok"
+        except Exception as e:
+            _last_err = f"{_clients[0]}: {str(e)[:200]}"
+            status(f"Stream client={_clients[0]} başarısız → {str(e)[:160]}")
 
     if not stream_url:
-        status("Stream URL bulunamadı — video özel veya kısıtlı olabilir")
-        _record_fail("Stream URL bulunamadı", video_id)
-        on_set_live(status="error", message="Stream URL bulunamadı", progress=0)
+        msg = f"Stream URL bulunamadı — {_last_err or 'hiçbir client format vermedi'}"
+        status(msg)
+        _record_fail(msg, video_id)
+        on_set_live(status="error", message=msg, progress=0)
         return
 
     # 4. Frame çıkarımı — tek geçiş ffmpeg (yedek: opencv)
