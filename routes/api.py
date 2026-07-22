@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, Response
 
 from config import load_config, save_config
-from services.youtube import fetch_channel_videos, channel_id_from_url, has_cookies
+from services.youtube import (
+    fetch_channel_videos, channel_id_from_url, has_cookies, pot_configured)
 from services.job_manager import JOB_MANAGER
 from models.database import (
     get_channel, get_channel_videos, get_video, get_detections, get_recent_videos,
@@ -864,7 +865,7 @@ def analyze_single_video():
         return jsonify({"error": "Geçerli bir YouTube URL'si girin"}), 400
     if "/shorts/" in url:
         return jsonify({"error": "Shorts videoları analiz edilmiyor"}), 400
-    if not has_cookies():
+    if not has_cookies() and not pot_configured():
         return jsonify({
             "error": "YouTube cookie bulunamadı. Railway'de YOUTUBE_COOKIES "
                      "env var'ını ayarlaman gerekiyor.",

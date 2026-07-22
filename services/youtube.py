@@ -29,9 +29,23 @@ def has_cookies():
     return _cookie_file_path() is not None
 
 
+def pot_configured():
+    """bgutil PO token servisi tanımlı mı (YT_POT_BASE_URL)."""
+    return bool(os.environ.get("YT_POT_BASE_URL", "").strip())
+
+
+def _use_cookies():
+    """YT_USE_COOKIES=0/false ile cookie'ler devre dışı bırakılabilir.
+    Datacenter IP'sinde hesap cookie'leri 'sign in to confirm you're not a bot'
+    tetikleyebiliyor; PO token ile cookie'siz (anonim) çalışmak genelde daha
+    stabil. Varsayılan: cookie kullan."""
+    return os.environ.get("YT_USE_COOKIES", "1").strip().lower() not in (
+        "0", "false", "no", "off", "")
+
+
 def get_ydl_opts(extra=None):
     opts = {"quiet": True, "no_warnings": True}
-    cp = _cookie_file_path()
+    cp = _cookie_file_path() if _use_cookies() else None
     if cp:
         opts["cookiefile"] = cp
 
