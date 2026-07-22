@@ -517,26 +517,29 @@ def _analyze_video_core(
     #    Sırayla dene, ilk format vereni kullan; hepsi başarısızsa GERÇEK hatayı
     #    logla (kör "bulunamadı" yerine).
     status(f"Stream alınıyor: {title[:40]}")
-    _stream_fmt = (
-        "bv*[height<=480][vcodec^=avc]/b[height<=480][vcodec^=avc]/"
-        "bv*[height<=480]/b[height<=480]/worst[vcodec!=none]/worst"
-    )
 
     def _pick_stream_url(si):
+        # Katı format seçici KULLANMIYORUZ (bazı videolarda hiç eşleşmeyip
+        # "Requested format is not available" veriyor). Onun yerine mevcut
+        # formatlardan doğrudan URL'li, video codec'li olanı elle seçiyoruz;
+        # ≤480p tercih, yoksa en düşük çözünürlük. ffmpeg zaten 640px'e küçültür.
         if not si:
-            return None
-        # Tek URL'li format (mp4, HLS)
+            return None, 0
         if si.get("url"):
-            return si["url"]
-        # Birleşik format (DASH: ayrı video+audio) → video parçasını al
-        for rf in (si.get("requested_formats") or []):
-            if rf.get("vcodec") not in (None, "none") and rf.get("url"):
-                return rf["url"]
-        # Format listesinden en iyi video URL'i
-        for f in reversed(si.get("formats") or []):
-            if f.get("url") and f.get("vcodec") not in (None, "none"):
-                return f["url"]
-        return None
+            return si["url"], 1
+        fmts = si.get("formats") or []
+        cand = [f for f in fmts
+                if f.get("url") and f.get("vcodec") not in (None, "none")]
+        if not cand:
+            # DASH birleşik → video parçası
+            for rf in (si.get("requested_formats") or []):
+                if rf.get("vcodec") not in (None, "none") and rf.get("url"):
+                    return rf["url"], len(fmts)
+            return None, len(fmts)
+        le480 = [f for f in cand if (f.get("height") or 99999) <= 480]
+        pool = le480 or cand
+        pool.sort(key=lambda f: (f.get("height") or 99999, f.get("tbr") or 0))
+        return pool[0]["url"], len(fmts)
 
     stream_url = None
     _last_err = None
@@ -545,15 +548,19 @@ def _analyze_video_core(
             with YoutubeDL(get_ydl_opts({
                 "skip_download": True,
                 "noplaylist": True,
-                "format": _stream_fmt,
+                "ignore_no_formats_error": True,
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
-            stream_url = _pick_stream_url(si)
+            stream_url, nfmt = _pick_stream_url(si)
             if stream_url:
-                status(f"Stream OK (client={_clients[0]})")
+                status(f"Stream OK (client={_clients[0]}, format sayısı={nfmt})")
                 break
-            _last_err = f"{_clients[0]}: oynatılabilir format yok"
+            sample = ",".join(
+                str(f.get("format_id")) for f in ((si or {}).get("formats") or [])[:8])
+            _last_err = (f"{_clients[0]}: URL'li video formatı yok "
+                         f"(format={nfmt}; ör: {sample or 'hiç'})")
+            status(_last_err)
         except Exception as e:
             _last_err = f"{_clients[0]}: {str(e)[:200]}"
             status(f"Stream client={_clients[0]} başarısız → {str(e)[:160]}")
