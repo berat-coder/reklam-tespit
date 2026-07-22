@@ -49,6 +49,14 @@ def get_ydl_opts(extra=None):
     if cp:
         opts["cookiefile"] = cp
 
+    # Residential/mobil proxy — datacenter IP'sinde (Railway) YouTube video
+    # formatı vermiyor; ev IP'si üzerinden geçince engel kalkar. Tüm yt-dlp
+    # çağrıları (metadata/kanal/stream) bu proxy'yi kullanır. Örn:
+    #   YT_PROXY=http://kullanici:sifre@host:port
+    proxy = os.environ.get("YT_PROXY", "").strip()
+    if proxy:
+        opts["proxy"] = proxy
+
     # extractor_args'ı iki kaynaktan birleştir: (1) PO token servisi (varsa),
     # (2) çağıranın verdiği (ör. youtube.player_client). Düz .update() ikisini
     # birbirine ezerdi; o yüzden anahtar-anahtar birleştiriyoruz.
