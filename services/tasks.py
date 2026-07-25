@@ -569,6 +569,12 @@ def _analyze_video_core(
                 "noplaylist": True,
                 "ignore_no_formats_error": True,
                 "logger": log,
+                # get_ydl_opts varsayılanı no_warnings=True — uyarıları tamamen
+                # susturuyor ve logger'a hiçbir şey ulaşmıyordu. Asıl ret sebebi
+                # (bot kontrolü / SABR / PO token / JS challenge) uyarıda geliyor.
+                "no_warnings": False,
+                "quiet": False,
+                "verbose": False,
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
@@ -580,7 +586,10 @@ def _analyze_video_core(
             fmts = (si or {}).get("formats") or []
             vids = [f for f in fmts if f.get("vcodec") not in (None, "none")]
             nourl = [f for f in vids if not f.get("url")]
-            warn = " | ".join(m[:180] for m in log.msgs[-2:]) or "uyarı yok"
+            # En bilgilendirici uyarıyı öne al (jenerik "no formats" satırları değil)
+            key_msgs = [m for m in log.msgs if not m.startswith(
+                ("No video formats", "Requested format"))]
+            warn = " | ".join(m[:180] for m in (key_msgs or log.msgs)[-2:]) or "uyarı yok"
             _last_err = (f"{cname}: format={len(fmts)}, video={len(vids)}, "
                          f"URL'siz video={len(nourl)} → {warn}")
             _diag.append(f"{cname}[f{len(fmts)}/v{len(vids)}/nourl{len(nourl)}] {warn[:110]}")
