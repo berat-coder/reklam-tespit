@@ -541,29 +541,52 @@ def _analyze_video_core(
         pool.sort(key=lambda f: (f.get("height") or 99999, f.get("tbr") or 0))
         return pool[0]["url"], len(fmts)
 
+    class _YdlLog:
+        """yt-dlp'nin uyarılarını yakalar. Asıl ret sebebi (bot kontrolü,
+        'missing a url / SABR', PO token uyarısı) burada geliyor; ekrana
+        yansımazsa kör kalıyoruz."""
+        def __init__(self):
+            self.msgs = []
+        def debug(self, m):
+            pass
+        def info(self, m):
+            pass
+        def warning(self, m):
+            self.msgs.append(str(m))
+        def error(self, m):
+            self.msgs.append(str(m))
+
     stream_url = None
     _last_err = None
-    for _clients in (["tv"], ["web_safari"], ["mweb"], ["ios"], ["web"]):
+    for _clients in (["tv"], ["web_safari"], ["web"], ["mweb"],
+                     ["ios"], ["android_vr"], ["tv_embedded"]):
+        cname = _clients[0]
+        log = _YdlLog()
         try:
             with YoutubeDL(get_ydl_opts({
                 "skip_download": True,
                 "noplaylist": True,
                 "ignore_no_formats_error": True,
+                "logger": log,
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
             stream_url, nfmt = _pick_stream_url(si)
             if stream_url:
-                status(f"Stream OK (client={_clients[0]}, format sayısı={nfmt})")
+                status(f"Stream OK (client={cname}, format sayısı={nfmt})")
                 break
-            sample = ",".join(
-                str(f.get("format_id")) for f in ((si or {}).get("formats") or [])[:8])
-            _last_err = (f"{_clients[0]}: URL'li video formatı yok "
-                         f"(format={nfmt}; ör: {sample or 'hiç'})")
+            # Teşhis: video formatı var ama URL'i mi yok (SABR), yoksa hiç mi yok?
+            fmts = (si or {}).get("formats") or []
+            vids = [f for f in fmts if f.get("vcodec") not in (None, "none")]
+            nourl = [f for f in vids if not f.get("url")]
+            warn = " | ".join(m[:180] for m in log.msgs[-2:]) or "uyarı yok"
+            _last_err = (f"{cname}: format={len(fmts)}, video={len(vids)}, "
+                         f"URL'siz video={len(nourl)} → {warn}")
             status(_last_err)
         except Exception as e:
-            _last_err = f"{_clients[0]}: {str(e)[:200]}"
-            status(f"Stream client={_clients[0]} başarısız → {str(e)[:160]}")
+            warn = " | ".join(m[:180] for m in log.msgs[-2:])
+            _last_err = f"{cname}: {str(e)[:200]}" + (f" | {warn}" if warn else "")
+            status(f"Stream client={cname} başarısız → {_last_err[:240]}")
 
     if not stream_url:
         msg = f"Stream URL bulunamadı — {_last_err or 'hiçbir client format vermedi'}"
