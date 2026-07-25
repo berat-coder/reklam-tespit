@@ -2526,6 +2526,18 @@ async function loadHealth() {
       banner.style.display = 'none';
     }
   }
+  // Tarama işçisi (ofis makinesi) durumu — yalnız işçi modu kuruluysa gösterilir
+  let wk = null;
+  try { wk = await (await fetch('/api/worker/status')).json(); } catch (e) {}
+  if (wk && wk.configured && banner && banner.style.display === 'none' && !wk.online) {
+    banner.className = 'cookie-banner warn';
+    banner.style.display = 'flex';
+    banner.innerHTML = `<i class="ti ti-plug-connected-x"></i>
+      <span>Tarama sunucusu çevrimdışı — panel ve raporlar çalışıyor, yeni taramalar
+      sunucu açılınca otomatik işlenecek.</span>
+      <span style="margin-left:auto;cursor:pointer;opacity:.8" onclick="goStatus()">Durum →</span>`;
+  }
+
   // Ana sayfadaki şerit
   const strip = $('healthStrip');
   if (strip) {
@@ -2533,6 +2545,9 @@ async function loadHealth() {
     strip.innerHTML = `<div class="health-strip">
       <span class="hs-dot ${ok?'ok':'bad'}"></span>
       <span>Cookie: <strong>${ok?'geçerli':'süresi dolmuş'}</strong></span>
+      ${wk && wk.configured ? `<span class="hs-sep">·</span>
+        <span class="hs-dot ${wk.online?'ok':'bad'}"></span>
+        <span>Tarama sunucusu: <strong>${wk.online?'çevrimiçi':'çevrimdışı'}</strong></span>` : ''}
       <span class="hs-sep">·</span>
       <span>Son başarılı tarama: <strong>${_agoTr(h.last_success_iso)}</strong></span>
       ${h.quota_exhausted?`<span class="hs-sep">·</span><span style="color:var(--amber)">Gemini kotası doldu (≈10:00'da açılır)</span>`:''}

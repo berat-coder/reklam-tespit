@@ -81,6 +81,11 @@ _ADMIN_ONLY_GET_PREFIXES = ("/api/users",)
 def _require_login():
     if request.path in ("/login", "/logout"):
         return
+    # Ofis işçisi uçları oturum değil, paylaşılan gizli anahtar (X-Worker-Token)
+    # ile doğrulanır — kendi kontrolleri routes/api.py içinde. Sabit token yoksa
+    # o uçlar zaten 401 döner, yani burada geçirmek kapıyı açmaz.
+    if request.path in ("/api/worker/frame", "/api/worker/heartbeat"):
+        return
     # Auth kapalıysa (local) herkes yönetici — geç.
     if not AUTH_ENABLED:
         return

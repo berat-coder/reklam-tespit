@@ -1,11 +1,13 @@
 import os
 import io
+import re
 import csv
+import hmac
 from datetime import datetime, timedelta
 
 from flask import Blueprint, request, jsonify, Response
 
-from config import load_config, save_config
+from config import load_config, save_config, FRAMES_DIR
 from services.youtube import (
     fetch_channel_videos, channel_id_from_url, has_cookies, pot_configured)
 from services.job_manager import JOB_MANAGER
@@ -18,7 +20,7 @@ from models.database import (
     create_user, list_users, delete_user,
     add_brand_alias, bump_ignore_and_maybe_suggest, approve_suggestion,
     reject_suggestion, remove_rule, get_channel_rules,
-    migrate_sqlite_to_pg,
+    migrate_sqlite_to_pg, kv_get, kv_set,
 )
 from services.aggregates import compute_aggregates
 
@@ -900,3 +902,74 @@ def cancel_queue():
 def recent_videos_endpoint():
     videos = get_recent_videos(10)
     return jsonify({"videos": videos})
+
+
+# ── Ofis işçisi uçları ────────────────────────────────────────────────────────
+# YouTube, Railway'in datacenter IP'sinden video formatı vermiyor; bu yüzden
+# yt-dlp + ffmpeg işi ofiste (normal internet bağlantısında) çalışan bir işçide
+# yapılır. İşçi sonuçları doğrudan Postgres'e yazar, kanıt karelerini de buradan
+# yükler. Panel/veritabanı 7/24 Railway'de kalır — işçi kapalıyken de her şey
+# görünür, yalnız yeni tarama kuyrukta bekler.
+
+_WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "").strip()
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,24}$")
+_FRAME_NAME_RE = re.compile(r"^frame_\d{1,6}\.jpg$")
+
+
+def _worker_authed():
+    if not _WORKER_TOKEN:
+        return False
+    sent = (request.headers.get("X-Worker-Token") or "").strip()
+    return bool(sent) and hmac.compare_digest(sent, _WORKER_TOKEN)
+
+
+@api_bp.route("/api/worker/frame", methods=["POST"])
+def worker_upload_frame():
+    """İşçiden gelen kanıt karesini kalıcı diske yaz."""
+    if not _worker_authed():
+        return jsonify({"error": "yetkisiz"}), 401
+    video_id = (request.form.get("video_id") or "").strip()
+    f = request.files.get("file")
+    if not f or not _VIDEO_ID_RE.match(video_id):
+        return jsonify({"error": "geçersiz istek"}), 400
+    # Yol geçişine kapalı: yalnız 'frame_0001.jpg' kalıbı kabul edilir
+    name = os.path.basename(f.filename or "")
+    if not _FRAME_NAME_RE.match(name):
+        return jsonify({"error": "geçersiz dosya adı"}), 400
+    d = FRAMES_DIR / video_id
+    d.mkdir(parents=True, exist_ok=True)
+    f.save(str(d / name))
+    return jsonify({"ok": True})
+
+
+@api_bp.route("/api/worker/heartbeat", methods=["POST"])
+def worker_heartbeat():
+    """İşçi hayatta sinyali — panelde çevrimiçi/çevrimdışı rozeti için."""
+    if not _worker_authed():
+        return jsonify({"error": "yetkisiz"}), 401
+    data = request.get_json(silent=True) or {}
+    kv_set("worker_heartbeat", {
+        "at": datetime.utcnow().isoformat(),
+        "host": str(data.get("host", ""))[:60],
+        "version": str(data.get("version", ""))[:40],
+    })
+    return jsonify({"ok": True})
+
+
+@api_bp.route("/api/worker/status")
+def worker_status():
+    """Panel: işçi çevrimiçi mi? (90 sn içinde sinyal geldiyse çevrimiçi)"""
+    hb = kv_get("worker_heartbeat") or {}
+    online, age = False, None
+    if hb.get("at"):
+        try:
+            age = (datetime.utcnow() - datetime.fromisoformat(hb["at"])).total_seconds()
+            online = age < 90
+        except Exception:
+            pass
+    return jsonify({
+        "configured": bool(_WORKER_TOKEN),
+        "online": online,
+        "seconds_ago": round(age) if age is not None else None,
+        "host": hb.get("host", ""),
+    })

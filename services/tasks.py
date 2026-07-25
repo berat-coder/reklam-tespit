@@ -20,6 +20,7 @@ from config import (
     SCENE_DIFF_THRESHOLD, LOWER_BAND_THRESHOLD,
     TARGET_SAMPLE_FRAMES, MAX_API_FRAMES,
 )
+from services import frame_sync
 from services.gemini import gemini_analyze_batch, gemini_extract_brands
 from services.aggregates import compute_aggregates, suggest_channel_logos
 from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from_url
@@ -713,6 +714,9 @@ def _analyze_video_core(
             }
             detections.append(detection)
             on_add_detection(detection)
+            # İşçi modunda kare Railway'e yüklenir (panelde kanıt kareleri
+            # eksiksiz görünsün). Tek makine kurulumunda no-op.
+            frame_sync.queue_frame(video_id, fd["path"])
             emit_pos += 1
 
     # 6. Batch'ler hâlinde Gemini analizi
@@ -821,6 +825,11 @@ def _analyze_video_core(
             set_channel_brand_flag(channel_id, m, "auto_main_sponsor", True)  # rozet
         status(f"Otomatik ana sponsor: {', '.join(auto)}")
         agg = recompute_video_aggregates(video_id) or agg  # bayraklarla yeniden hesapla
+
+    # İşçi modu: kalan kare yüklemeleri bitsin (panelde eksik kare kalmasın)
+    if frame_sync.enabled():
+        status("Kareler panele yükleniyor...")
+        frame_sync.wait(180)
 
     msg = f"✓ Tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam"
     status(msg)
