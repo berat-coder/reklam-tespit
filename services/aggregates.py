@@ -141,6 +141,59 @@ def _min_confidence_rank():
     return _MIN_CONF_CACHE["rank"]
 
 
+# ── Süre / olay modeli ────────────────────────────────────────────────────────
+# Sektör standardı (Nielsen, Blinkfire vb.) sponsorluğu "kaç kare" ile değil
+# GÖRÜNÜRLÜK SÜRESİ ve OLAY SAYISI ile ölçer. Kalıcı bir köşe logosu 55 karede
+# görünüyorsa bu 55 reklam değil, TEK bir sponsorluğun 55×aralık saniyelik
+# görünürlüğüdür. Aşağıdaki yardımcılar bunu hesaplar.
+
+# Belirginlik (prominence): aynı süre, ekranı kaplayan reklamda daha değerli.
+# EMV hesabında çarpan olarak kullanılır.
+_PROMINENCE = {
+    "Pre-Roll": 1.0, "Mid-Roll": 1.0, "Video Reklam": 1.0, "Geçiş Karesi": 0.8,
+    "Alt Bant": 0.6, "Sponsor Bandı": 0.6, "Ürün Yerleştirme": 0.5,
+    "Köşe Banner": 0.35, "Arka Plan": 0.3,
+}
+_DEFAULT_PROMINENCE = 0.5
+
+
+def _sampling_interval(detections):
+    """Kareler arası tipik aralık (sn) — süre hesabının birimi.
+    Medyan kullanılır ki atlanan/eksik kareler ortalamayı bozmasın."""
+    secs = sorted(d.get("seconds", 0.0) or 0.0 for d in detections)
+    diffs = [b - a for a, b in zip(secs, secs[1:]) if b > a]
+    if not diffs:
+        return 8.0                      # tek kare / süresiz canlı → varsayılan
+    diffs.sort()
+    mid = len(diffs) // 2
+    med = diffs[mid] if len(diffs) % 2 else (diffs[mid - 1] + diffs[mid]) / 2
+    return med if med > 0 else 8.0
+
+
+def _runs(seconds, gap):
+    """Ardışık görünümleri tek OLAY'a topla. İki kare arası boşluk `gap`
+    saniyeden büyükse marka ekrandan çıkmış, yeni bir olay başlamış demektir."""
+    ss = sorted(seconds)
+    if not ss:
+        return []
+    out, start, prev = [], ss[0], ss[0]
+    for s in ss[1:]:
+        if s - prev > gap:
+            out.append((start, prev))
+            start = s
+        prev = s
+    out.append((start, prev))
+    return out
+
+
+def _fmt_dur(sec):
+    """420 → '7:00', 45 → '0:45', 3720 → '1:02:00'"""
+    sec = int(round(sec))
+    h, r = divmod(sec, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 def _apply_alias(name, alias_map):
     """Öğrenilen yeniden adlandırma: kaynak adı kanonik ada çevirir."""
     if not alias_map:
@@ -406,13 +459,51 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             })
     persistent.sort(key=lambda x: x["ratio"], reverse=True)
 
+    # ── Süre / olay modeli için hazırlık ──
+    interval = _sampling_interval(detections)
+    gap = interval * 2.5          # bu kadar boşluk = marka ekrandan çıkmış
+    # Analiz edilen zaman aralığı (video süresi yerine örneklenen span)
+    all_secs = [d.get("seconds", 0.0) or 0.0 for d in detections]
+    span_seconds = (max(all_secs) - min(all_secs) + interval) if all_secs else 0.0
+    # Kalıcılık sinyalini marka bazında eriş (sponsorluk/spot ayrımı için)
+    persist_by_key = {_norm_key(p["marka"]): p for p in persistent}
+
     # ── Marka raporu ──
     brand_report = []
     for b in brand_acc.values():
         tur_counts = b["turler"]
         frames = sorted(b["frames"].values(), key=lambda f: f["seconds"])
+
+        # Görünürlük: kanıt kareleri (baskılananlar dahil) gerçek ekran süresini
+        # verir — sayım baskılansa da marka ekranda durmaya devam ediyordu.
+        runs = _runs([f["seconds"] for f in frames], gap)
+        exposure = sum((e - s) + interval for s, e in runs)
+        share = (exposure / span_seconds) if span_seconds else 0.0
+        p = persist_by_key.get(_norm_key(b["marka"]), {})
+        # Kalıcı sponsorluk iki şartı birlikte ister:
+        #  (a) kalıcılık sinyali (elle işaretli / otomatik aday / karelerin ≥%80'i)
+        #  (b) programın en az %40'ında EKRANDA olması
+        # (b) olmadan, arada uzun boşluklarla birkaç kez çıkan bir spot reklam
+        # yalnızca "her örneklenen karede görüldü" diye sponsor sanılıyordu.
+        # Elle işaretlenmiş ana sponsor kullanıcının kararıdır → şart aranmaz.
+        manual = bool(p.get("is_main_sponsor") or p.get("is_auto_main_sponsor"))
+        is_sponsorship = manual or bool(
+            (p.get("auto_candidate") or p.get("ratio", 0) >= 0.80) and share >= 0.40)
+        # Kalıcı sponsorluk = TEK bir sponsorluk olayı (55 ayrı reklam değil).
+        appearance_count = 1 if is_sponsorship else len(runs)
+        dom_tur = max(tur_counts, key=tur_counts.get) if tur_counts else "Reklam"
+
         brand_report.append({
             "marka": b["marka"],
+            # ── Süre/olay metrikleri (birincil) ──
+            "kind": "sponsorluk" if is_sponsorship else "spot",
+            "appearance_count": appearance_count,
+            "exposure_seconds": round(exposure, 1),
+            "exposure_label": _fmt_dur(exposure),
+            "screen_share_pct": round(100 * share, 1),
+            "prominence": _PROMINENCE.get(dom_tur, _DEFAULT_PROMINENCE),
+            "dominant_tur": dom_tur,
+            # ── Ham sayımlar (ikincil, detay/geri uyum) ──
             "appearances": b["appearances"],
             "frame_count": len(b["frames"]),
             "tur_counts": tur_counts,  # {tur: adet} — kırılım için
@@ -426,8 +517,15 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             "is_auto_main_sponsor": _norm_key(b["marka"]) in auto_keys,
             "is_active_only": _norm_key(b["marka"]) in active_only_keys,
         })
-    # Ana sponsorlar en üstte, sonra görünüm sayısına göre
-    brand_report.sort(key=lambda x: (not x["is_main_sponsor"], -x["appearances"]))
+    # Pay (Share of Voice): markanın toplam görünürlük içindeki oranı.
+    total_exposure = sum(b["exposure_seconds"] for b in brand_report)
+    for b in brand_report:
+        b["sov_pct"] = (round(100 * b["exposure_seconds"] / total_exposure, 1)
+                        if total_exposure else 0.0)
+
+    # Ana sponsorlar en üstte, sonra GÖRÜNÜRLÜK SÜRESİNE göre (eski sıralama ham
+    # görünüm sayısınaydı — kalıcı logo listeyi domine ediyordu)
+    brand_report.sort(key=lambda x: (not x["is_main_sponsor"], -x["exposure_seconds"]))
 
     return {
         "ad_frame_count": ad_frame_count,
@@ -435,6 +533,16 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         "brand_counts": brand_counts,
         "persistent_overlays": persistent,
         "brand_report": brand_report,
+        # ── Video geneli süre/olay özeti ──
+        "exposure_summary": {
+            "interval_seconds": round(interval, 1),
+            "span_seconds": round(span_seconds, 1),
+            "total_exposure_seconds": round(total_exposure, 1),
+            "sponsorship_count": sum(1 for b in brand_report if b["kind"] == "sponsorluk"),
+            "spot_count": sum(b["appearance_count"] for b in brand_report
+                              if b["kind"] == "spot"),
+            "brand_count": len(brand_report),
+        },
     }
 
 
