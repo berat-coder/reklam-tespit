@@ -129,10 +129,18 @@ DEFAULT_SPORTS_IGNORE = [
     "Dünya Kupası", "World Cup", "EURO", "Milli Takım", "A Milli Takım",
 ]
 
-# Reklam SAYILMAYACAK yerleşimler (placement). Varsayılan: oyuncunun giydiği
-# forma/kit üzerindeki sponsor. Overlay/tam-ekran/ürün-yerleştirme/LED sayılır.
-# UI'dan düzenlenebilir; ileride stüdyo dekoru/stat tabelası da eklenebilir.
-DEFAULT_EXCLUDED_PLACEMENTS = ["Forma"]
+# Reklam SAYILMAYACAK yerleşimler (placement). UI'dan düzenlenebilir.
+#  • Forma        — oyuncunun GİYDİĞİ forma sponsoru
+#  • Basın Panosu — kulübün basın toplantısı backdrop'u / medya duvarı / stat
+#                   tabelası: kulübün sponsoru, yayının reklamı değil
+#  • Satış Kanalı — pazaryeri/kargo/banka ("Trendyol'da satılır"): asıl
+#                   reklamveren ürünün markası, pazaryeri değil
+# Overlay/alt bant/tam ekran/ürün yerleştirme/LED ve KANALIN stüdyo dekoru sayılır.
+DEFAULT_EXCLUDED_PLACEMENTS = ["Forma", "Basın Panosu", "Satış Kanalı"]
+
+# Sayıma girmek için gereken en düşük güven: "Yüksek" | "Orta" | "Düşük".
+# Gemini'nin "Düşük" güvenle yazdığı tahminler sayılmaz (kanıtta görünür).
+DEFAULT_MIN_CONFIDENCE = os.environ.get("MIN_CONFIDENCE", "Orta")
 
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",
@@ -184,6 +192,7 @@ def load_config():
         "auto_scan": dict(DEFAULT_AUTO_SCAN),
         "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
         "excluded_placements": list(DEFAULT_EXCLUDED_PLACEMENTS),
+        "min_confidence": DEFAULT_MIN_CONFIDENCE,
         "frame_retention": dict(DEFAULT_FRAME_RETENTION),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır

@@ -12,9 +12,19 @@ _GUVEN_RANK = {"yüksek": 3, "orta": 2, "düşük": 1}
 # Model bazen tür alanına cümle/birleşik değer yazıyor; temiz kategoriye eşle.
 # Sıra önemli — ilk eşleşen kazanır.
 _TUR_CANON = [
-    # Yerleşim: oyuncunun GİYDİĞİ forma/kit sponsoru (varsayılan reklam sayılmaz)
-    ("forma", "Forma"), ("jersey", "Forma"), ("kit", "Forma"), ("mayo", "Forma"),
-    ("formanın", "Forma"), ("oyuncu üz", "Forma"),
+    # Yerleşim: oyuncunun GİYDİĞİ forma sponsoru (varsayılan reklam sayılmaz).
+    # NOT: "kit" tek başına çok geniş eşleşiyordu ("kitap", "kitle" → Forma);
+    # yalnız tam sözcük olarak eşleşsin diye buradan çıkarıldı, aşağıda
+    # _canonical_tur içinde sözcük sınırıyla ele alınıyor.
+    ("forma", "Forma"), ("jersey", "Forma"), ("mayo", "Forma"),
+    ("oyuncu üz", "Forma"),
+    # Kulübün basın toplantısı panosu / medya duvarı / stadyum tabelası:
+    # kulübün kendi sponsorları, YAYININ reklamı değil → sayılmaz.
+    ("basın", "Basın Panosu"), ("backdrop", "Basın Panosu"),
+    ("medya duvar", "Basın Panosu"), ("pano", "Basın Panosu"),
+    # Pazaryeri/kargo/banka: reklamın sahibi değil, satış kanalı → sayılmaz.
+    ("satış kanal", "Satış Kanalı"), ("pazaryeri", "Satış Kanalı"),
+    ("pazar yeri", "Satış Kanalı"), ("marketplace", "Satış Kanalı"),
     ("pre-roll", "Pre-Roll"), ("pre roll", "Pre-Roll"),
     ("mid-roll", "Mid-Roll"), ("mid roll", "Mid-Roll"),
     ("video reklam", "Video Reklam"),
@@ -26,6 +36,9 @@ _TUR_CANON = [
     ("arka plan", "Arka Plan"),
 ]
 
+# Tam sözcük eşleşmesi gereken türler (substring çok geniş kaçıyor)
+_TUR_WORD_CANON = [(re.compile(r"\bkit\b"), "Forma")]
+
 
 def _norm(s):
     return re.sub(r"\s+", " ", (s or "").strip())
@@ -35,6 +48,9 @@ def _canonical_tur(raw):
     s = (raw or "").lower()
     for kw, canon in _TUR_CANON:
         if kw in s:
+            return canon
+    for rx, canon in _TUR_WORD_CANON:
+        if rx.search(s):
             return canon
     r = _norm(raw)
     return r if r else "Reklam"
@@ -104,6 +120,27 @@ def _excluded_placements():
 _PASSIVE_TURS = {"Köşe Banner", "Arka Plan", "Reklam"}
 
 
+# Sayıma girmek için gereken en düşük güven (config'ten, 30s cache).
+# Model "Düşük" güvenle yazdığı tahminler yanlış-pozitiflerin başlıca kaynağıydı
+# ve hiçbir yerde elenmiyordu. Eşiğin altındaki kareler SAYILMAZ ama kanıt
+# olarak görünmeye devam eder (kullanıcı elle onaylayabilir).
+_MIN_CONF_CACHE = {"ts": 0.0, "rank": 2}
+
+
+def _min_confidence_rank():
+    import time
+    now = time.time()
+    if now - _MIN_CONF_CACHE["ts"] > 30:
+        try:
+            from config import load_config, DEFAULT_MIN_CONFIDENCE
+            val = load_config().get("min_confidence") or DEFAULT_MIN_CONFIDENCE
+        except Exception:
+            val = "Orta"
+        _MIN_CONF_CACHE["rank"] = _GUVEN_RANK.get(_norm_key(val), 2)
+        _MIN_CONF_CACHE["ts"] = now
+    return _MIN_CONF_CACHE["rank"]
+
+
 def _apply_alias(name, alias_map):
     """Öğrenilen yeniden adlandırma: kaynak adı kanonik ada çevirir."""
     if not alias_map:
@@ -146,6 +183,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     auto_keys = {_norm_key(s) for s in (auto_main_sponsors or []) if s}
     once_counted = set()   # (marka_key, anahtar) — videoda bir kez sayılanlar
     total = len(detections)
+    min_conf = _min_confidence_rank()   # eşiğin altındaki kareler sayılmaz
 
     type_counts = {}
     brand_counts = {}
@@ -193,6 +231,12 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         if not d.get("reklam_var"):
             continue
 
+        # ── Güven eşiği ──
+        # Modelin "Düşük" güvenle yazdığı tahminler (okunamayan logo, karıştırılan
+        # marka) sayıma girmez; kare yine de kanıt akışında görünür ve marka
+        # kanıtlarına eklenir. Eşik Ayarlar'dan değiştirilebilir.
+        low_conf = _GUVEN_RANK.get(_norm_key(guven), 1) < min_conf
+
         # Kanal logosu / yok-sayılan / kanal adı olmayan markalar = gerçek reklamlar
         def _is_excluded(name):
             return (_norm_key(name) in excluded_keys
@@ -223,6 +267,10 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             #  • Ürün Yerleştirme: masadaki ürün her karede görünür → videoda 1.
             # İlk görünüm sayılır; sonrakiler 'repeats'e düşer (kanıt olarak kalır).
             counted, repeats = [], []
+            if low_conf:
+                # Düşük güven: hiçbiri sayılmaz, hepsi kanıta düşer
+                repeats = list(pairs)
+                pairs = []
             for (t, k) in pairs:
                 if bk in active_only_keys and t in _PASSIVE_TURS:
                     okey = (bk, "__sponsor_passive__")
@@ -260,16 +308,18 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
                 b["last_seconds"], b["last_ts"] = secs, ts
 
         # Markasız ama aktif türde reklam sinyali (geçiş karesi vb.)
-        brandless_active = any(
+        brandless_active = (not low_conf) and any(
             not _norm(t.get("marka", ""))
             and _canonical_tur(t.get("tur", "")) not in _PASSIVE_TURS
             and _canonical_tur(t.get("tur", "")) not in excluded_pl
             for t in ad_tespitler
         )
-        generic_only = not markalar and not tespitler
 
+        # NOT: eskiden 'generic_only' (model reklam_var=true deyip hiç marka/tespit
+        # vermemesi) kareyi KOŞULSUZ saydırıyordu. Gerekçesiz "reklam var" iddiası
+        # doğrulanamıyor ve şişkinliğin sessiz kaynağıydı → artık sayılmıyor.
         # Tüm sinyaller elendiyse (ör. yalnız köşe logosu olan ana sponsor) → sayma
-        if not (frame_kept or brandless_active or generic_only):
+        if not (frame_kept or brandless_active):
             continue
         ad_frame_count += 1
 

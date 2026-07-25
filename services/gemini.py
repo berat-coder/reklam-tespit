@@ -67,113 +67,63 @@ def parse_json_safe(text):
     except json.JSONDecodeError:
         pass
     cleaned = text.strip()
+    # Batch yanıtı DİZİ döner; eski desen yalnız {...} yakalıyordu → dizi yanıtlar
+    # kurtarılamayıp tüm batch çöpe gidiyordu. Artık [...] de yakalanır.
     if "```" in cleaned:
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        m = re.search(r"```(?:json)?\s*([\[{].*[\]}])\s*```", cleaned, re.DOTALL)
         if m:
             cleaned = m.group(1)
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1:
-        cand = cleaned[start:end + 1].replace("\n", " ")
-        cand = re.sub(r",(\s*[}\]])", r"\1", cand)
-        try:
-            return json.loads(cand)
-        except json.JSONDecodeError:
-            pass
+    # Önce dizi, sonra nesne olarak kurtarmayı dene (trailing virgül temizliğiyle).
+    # Dizi kurtarmasında DİKKAT: metindeki ilk '[' çoğu zaman iç içe bir alan
+    # ("markalar": [...]) olabilir; onu yanıtın tamamı sanmamak için sonucun
+    # nesne listesi olmasını şart koşuyoruz.
+    for opener, closer in (("[", "]"), ("{", "}")):
+        start = cleaned.find(opener)
+        end = cleaned.rfind(closer)
+        if start != -1 and end != -1 and end > start:
+            cand = cleaned[start:end + 1].replace("\n", " ")
+            cand = re.sub(r",(\s*[}\]])", r"\1", cand)
+            try:
+                parsed = json.loads(cand)
+            except json.JSONDecodeError:
+                continue
+            if opener == "[" and not (
+                    isinstance(parsed, list)
+                    and any(isinstance(x, dict) for x in parsed)):
+                continue        # iç dizi yakalanmış → nesne kurtarmasına geç
+            return parsed
     has_ad = bool(re.search(r'"reklam_var"\s*:\s*true', text, re.IGNORECASE))
     markalar = []
     mm = re.search(r'"markalar"\s*:\s*\[(.*?)\]', text, re.DOTALL)
     if mm:
         markalar = [m.strip() for m in re.findall(r'"([^"]+)"', mm.group(1))]
     return {
-        "reklam_var": has_ad or bool(markalar),
-        "guven": "Orta" if (has_ad or markalar) else "Düşük",
+        # reklam_var'ı marka listesinden TÜRETME. Bozuk yanıtta "markalar" dolu
+        # diye kareyi reklam saymak başlıca yanlış-pozitif kaynağıydı: model
+        # kulüp armasını/forma sponsorunu yazdığında da kare reklam oluyordu.
+        # Yalnız açıkça "reklam_var": true yazıyorsa true.
+        "reklam_var": has_ad,
+        # Regex kurtarması belirsizdir → düşük güven (güven eşiğiyle sayım dışı).
+        "guven": "Düşük",
         "markalar": markalar,
         "tespitler": [],
         "ozet": "regex parse",
     }
 
 
-def gemini_analyze_frame(api_key, image_b64, channel_logos, known_brands, timestamp):
-    ctx = ""
-    if channel_logos:
-        ctx += f"\n\n🚫 KANALIN KENDİ LOGOLARI (BUNLARI REKLAM SAYMA): {', '.join(channel_logos[:10])}"
-    if known_brands:
-        ctx += f"\n📌 Video açıklamasında geçen markalar: {', '.join(known_brands[:10])}"
-
-    prompt = f"""YouTube video frame'i — zaman: {timestamp}{ctx}
-
-GÖREV: Bu görüntüde HARİCİ REKLAM, SPONSOR veya MARKA YERLEŞTİRME var mı?
-
-✅ REKLAM SAYILAN (bunlardan HERHANGİ BİRİ varsa reklam_var=true):
-- YouTube pre-roll / mid-roll reklam ekranı (tam ekran reklam, atla butonu, sayaç)
-- Reklam geçiş karesi (siyah, kırmızı, beyaz vs düz renk ekran — reklam arası)
-- Görüntünün herhangi bir köşesinde / kenarında reklam overlay'i, banner
-- Alt bant'ta marka logosu/sloganı/kampanya yazısı
-- Sponsor bandı, indirim kodu, "tıkla"/"satın al"/"kod ile indirim" yazıları
-- Bahis, oyun, bonus, hoşgeldin paketi reklamları
-- Konuşmacının elinde/yanında kasıtlı tuttuğu markalı ürün
-- Arka plan reklam panoları veya logo
-
-🚫 REKLAM SAYMA:
-- Kanalın kendi logosu (kanal logosu listesinde olanlar: {', '.join(channel_logos[:6]) if channel_logos else 'yok'})
-- Program/yayın adı bandı
-- Konuşmacı/misafir isim tagi
-- Sosyal medya hesabı tagi
-
-🔥 KRİTİK:
-- Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et
-- Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
-- Kategori: "Pre-Roll", "Mid-Roll", "Alt Bant", "Köşe Banner", "Sponsor Bandı", "Ürün Yerleştirme", "Geçiş Karesi", "Arka Plan"
-
-YANIT — SADECE JSON:
-{{
-  "reklam_var": true/false,
-  "guven": "Yüksek/Orta/Düşük",
-  "markalar": ["NET marka adları, kanal logosu hariç"],
-  "tespitler": [
-    {{"tur": "Pre-Roll|Mid-Roll|Alt Bant|Köşe Banner|Sponsor Bandı|Ürün Yerleştirme|Geçiş Karesi|Arka Plan",
-      "konum": "sağ üst|sol üst|sağ alt|sol alt|alt orta|üst orta|merkez|tam ekran",
-      "marka": "marka adı", "detay": "kısa açıklama"}}
-  ],
-  "ozet": "tek cümle"
-}}"""
-
-    payload = {
-        "contents": [{"parts": [
-            {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
-            {"text": prompt},
-        ]}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 2000,
-            "responseMimeType": "application/json",
-        },
-    }
-    data, err = gemini_call(api_key, payload)
-    if err:
-        return {"reklam_var": False, "guven": "Düşük", "markalar": [],
-                "tespitler": [], "ozet": err, "_skipped": True}
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return parse_json_safe(text)
-    except Exception as e:
-        return {"reklam_var": False, "guven": "Düşük", "markalar": [],
-                "tespitler": [], "ozet": f"Hata: {str(e)[:60]}", "_skipped": True}
-
-
 def _detection_rules(channel_logos):
     """Tek ve batch analizde paylaşılan ortak tespit kuralları."""
-    logos = ', '.join(channel_logos[:6]) if channel_logos else 'yok'
+    logos = ', '.join(channel_logos[:10]) if channel_logos else 'yok'
+    tur_list = " | ".join(f'"{t}"' for t in TUR_VALUES)
+    konum_list = " | ".join(f'"{k}"' for k in KONUM_VALUES)
     return f"""GÖREV: Her görüntüde HARİCİ REKLAM, SPONSOR veya MARKA YERLEŞTİRME var mı?
 
 ✅ REKLAM SAYILAN (bunlardan HERHANGİ BİRİ varsa reklam_var=true):
 - YouTube pre-roll / mid-roll reklam ekranı (tam ekran reklam, atla butonu, sayaç)
-- Reklam geçiş karesi (siyah, kırmızı, beyaz vs düz renk ekran — reklam arası)
 - Görüntünün köşesinde/kenarında YAYINA EKLENMİŞ reklam overlay'i, banner
 - Alt bant'ta marka logosu/sloganı/kampanya yazısı
 - Sponsor bandı, indirim kodu, "tıkla"/"satın al"/"kod ile indirim" yazıları
@@ -183,6 +133,9 @@ def _detection_rules(channel_logos):
   (ürün yerleştirme) — konuşmacının elinde tuttuğu markalı ürün dahil.
   Masadaki ürün (ör. kahve bardağı) her karede görünse bile tur her zaman
   "Ürün Yerleştirme" olmalı — "Alt Bant"/"Köşe Banner" ile KARIŞTIRMA.
+- KANALIN KENDİ STÜDYO DEKORUNDAKİ sponsor logosu (stüdyo arkasındaki ekran/
+  duvar/masa önü panelinde duran marka) → EVET, bu programın sponsorudur.
+  tur="Köşe Banner" ya da "Sponsor Bandı" ver.
 - Saha kenarı / LED reklam panoları, sahaya boyanmış reklam
 
 🚫 REKLAM SAYMA:
@@ -192,16 +145,33 @@ def _detection_rules(channel_logos):
   (forma göğüs/kol sponsoru) — bu maç görüntüsünde sürekli ekranda olur, REKLAM
   SAYMA. (Yazman gerekiyorsa SADECE tespit olarak tur="Forma" ver, "markalar"
   dizisine EKLEME.)
+- 🎤 BASIN TOPLANTISI PANOSU / KULÜP MEDYA DUVARI: teknik direktör veya
+  futbolcu açıklama yaparken ARKASINDAKİ panoda (backdrop) kulübün kendi
+  sponsorları tekrar tekrar basılıdır. Bu KULÜBÜN panosudur, bu YAYININ reklamı
+  DEĞİLDİR → REKLAM SAYMA. Aynı şekilde stadyum/tesis tabelaları, kulüp
+  basın odası duvarı, devre arası röportaj panosu.
+  (Yazman gerekiyorsa SADECE tespit olarak tur="Basın Panosu" ver, "markalar"
+  dizisine EKLEME.)
+- 🛒 SATIŞ KANALI / PAZARYERİ: bir ürün reklamında "Trendyol'da", "Hepsiburada",
+  "Amazon", kargo veya banka logosu geçiyorsa ASIL REKLAMVEREN ürünün markasıdır
+  (ör. Esperantos kahve reklamı → reklamveren "Esperantos", Trendyol değil).
+  Pazaryerini "markalar" dizisine EKLEME; istersen ayrı tespit olarak
+  tur="Satış Kanalı" ver. Pazaryeri ANCAK kendi kurumsal reklamını yapıyorsa
+  (kendi kampanyası, kendi sloganı) gerçek reklamveren sayılır.
 - FUTBOL KULÜBÜ ARMASI / TAKIM LOGOSU (Fenerbahçe, Galatasaray, Bayern, Real
   Madrid…) — kulüp kimliği, REKLAM DEĞİL
 - Lig / turnuva / federasyon logoları (UEFA, FIFA, TFF, Süper Lig, Şampiyonlar Ligi)
 - Milli takım / ülke armaları, forma numarası/oyuncu adı
 - Program/yayın adı bandı, sunucu/misafir isim tagi, sosyal medya tagi
+- Düz renkli (siyah/beyaz) boş kare TEK BAŞINA reklam değildir; yalnız üzerinde
+  reklam öğesi (marka, slogan, sayaç) varsa "Geçiş Karesi" yaz.
 
-⚽ KRİTİK AYRIM: GİYİLEN forma üzerindeki sponsor = HAYIR (sayma). Ama saha kenarı
-LED panosu, yayına eklenen overlay/alt bant, tam ekran reklam, aniden çıkan
-hareketli reklam, stüdyoda/masada yerleştirilmiş sponsor = EVET (yaz). Yani
-"oyuncunun ÜZERİNDE giydiği" ≠ "sahneye/yayına YERLEŞTİRİLMİŞ".
+⚽ KRİTİK AYRIM — "kim yerleştirdi?" diye sor:
+- Oyuncunun ÜZERİNDE giydiği sponsor → HAYIR
+- KULÜBÜN basın panosu / stadyum tabelası → HAYIR (kulübün sponsoru, yayının değil)
+- KANALIN yayınına eklediği overlay/alt bant/tam ekran → EVET
+- KANALIN stüdyo dekorundaki sponsor → EVET
+- Saha kenarı LED panosu → EVET
 
 🔥 KRİTİK:
 - Görüntünün SADECE BİR KÖŞE veya KENARI'nda bile reklam varsa tespit et
@@ -210,15 +180,34 @@ hareketli reklam, stüdyoda/masada yerleştirilmiş sponsor = EVET (yaz). Yani
   (ör. sol üstte kanal logosu + sağ üstte sponsor markası → sadece sponsoru yaz)
 - Her köşeyi ayrı değerlendir; bir köşedeki kanal logosu diğer köşedeki reklamı gölgelemesin
 - Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
+- EMİN DEĞİLSEN guven="Düşük" ver. Tahmin yürütme; okuyamadığın bir logoyu
+  "olabilir" diye yazma. Yanlış marka yazmak, hiç yazmamaktan kötüdür.
 - HER tespit nesnesinde "marka" alanını doldur (o tespit hangi markaya aitse).
   Aynı karede 2 marka varsa 2 AYRI tespit nesnesi yaz, her birinde kendi markası.
 - "tur" alanına SADECE ŞU LİSTEDEN TEK BİR kelime yaz — birden fazla yazma,
   eğik çizgi (/) kullanma, parantez/açıklama EKLEME:
-  "Pre-Roll" | "Mid-Roll" | "Video Reklam" | "Alt Bant" | "Köşe Banner" |
-  "Sponsor Bandı" | "Ürün Yerleştirme" | "Geçiş Karesi" | "Arka Plan" | "Forma"
-  ("Forma" = oyuncunun giydiği forma sponsoru — reklam sayılmaz, sadece kayıt için)
+  {tur_list}
+  ("Forma" = giyilen forma sponsoru, "Basın Panosu" = kulüp backdrop'u,
+   "Satış Kanalı" = pazaryeri/kargo — bu üçü reklam sayılmaz, sadece kayıt için)
+- "konum" alanına SADECE ŞU LİSTEDEN TEK BİR değer yaz: {konum_list}
 - "markalar" dizisine karedeki TÜM reklam markalarını yaz — ANCAK kanal logosu,
-  kulüp arması ve OYUNCU FORMASI sponsorunu bu diziye EKLEME"""
+  kulüp arması, OYUNCU FORMASI sponsoru, BASIN PANOSU markaları ve SATIŞ KANALI
+  (pazaryeri) markalarını bu diziye EKLEME"""
+
+
+# Tespit türleri ve ekran konumları — hem prompt'ta hem şemada AYNI liste
+# kullanılır. Şemadaki enum sayesinde model serbest metin uyduramaz; böylece
+# aggregates._canonical_tur substring tahminine bel bağlamaz.
+TUR_VALUES = [
+    "Pre-Roll", "Mid-Roll", "Video Reklam", "Alt Bant", "Köşe Banner",
+    "Sponsor Bandı", "Ürün Yerleştirme", "Geçiş Karesi", "Arka Plan",
+    "Forma", "Basın Panosu", "Satış Kanalı",
+]
+KONUM_VALUES = [
+    "sol üst", "sağ üst", "sol alt", "sağ alt",
+    "üst orta", "alt orta", "merkez", "tam ekran",
+]
+GUVEN_VALUES = ["Yüksek", "Orta", "Düşük"]
 
 
 # Batch JSON çıktısının yapısal şeması — drift/parse hatalarını azaltır
@@ -229,15 +218,15 @@ _BATCH_SCHEMA = {
         "properties": {
             "frame": {"type": "INTEGER"},
             "reklam_var": {"type": "BOOLEAN"},
-            "guven": {"type": "STRING"},
+            "guven": {"type": "STRING", "enum": GUVEN_VALUES},
             "markalar": {"type": "ARRAY", "items": {"type": "STRING"}},
             "tespitler": {
                 "type": "ARRAY",
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "tur": {"type": "STRING"},
-                        "konum": {"type": "STRING"},
+                        "tur": {"type": "STRING", "enum": TUR_VALUES},
+                        "konum": {"type": "STRING", "enum": KONUM_VALUES},
                         "marka": {"type": "STRING"},
                         "detay": {"type": "STRING"},
                     },
@@ -281,7 +270,11 @@ def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
                 f"spot reklamı (alt bant, tam ekran, ürün tanıtımı) ise o türü yaz. "
                 f"Kalıcı logoyu spot reklamla KARIŞTIRMA.")
     if known_brands:
-        ctx += f"\n📌 Video açıklamasında geçen markalar: {', '.join(known_brands[:10])}"
+        # Bu liste yalnız İPUCU. Priming riski var: model listedeki markayı
+        # görmediği karede de yazabiliyordu → açık uyarı ekleniyor.
+        ctx += (f"\n📌 Video açıklamasında geçen markalar (YALNIZ İPUCU): "
+                f"{', '.join(known_brands[:10])} — bunları SADECE gerçekten "
+                f"GÖRDÜĞÜN karede yaz, listede geçiyor diye yazma.")
 
     parts = [{"text": (
         f"Aşağıda bir YouTube videosundan {len(frames)} ayrı kare var.{ctx}\n\n"
@@ -323,13 +316,18 @@ def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
         if not isinstance(arr, list):
             arr = [arr]
     except Exception:
-        # Tek-nesne / bozuk JSON için güvenli parse, tüm frame'lere uygula
+        # Bozuk JSON → güvenli parse. DİKKAT: sonucu tüm frame'lere KOPYALAMA.
+        # Eskiden tek bir sonuç 12 karenin hepsine yazılıyordu; bir karede
+        # görülen marka 12 kareye yayılıp sayımı şişiriyor ve yanlış-pozitif
+        # üretiyordu. Kurtarılan yanıt dizi ise frame alanına göre eşleştirilir,
+        # tek nesne ise yalnız kendi frame'ine uygulanır; eşleşmeyenler
+        # 'skipped' işaretlenir (sayıma girmez).
         try:
             text = data["candidates"][0]["content"]["parts"][0]["text"]
         except Exception:
             return {i: _empty_result("parse hatası", skipped=True) for i in indices}
-        fallback = parse_json_safe(text)
-        return {i: fallback for i in indices}
+        recovered = parse_json_safe(text)
+        arr = recovered if isinstance(recovered, list) else [recovered]
 
     by_index = {}
     for o in arr:
