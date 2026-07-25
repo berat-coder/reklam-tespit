@@ -134,7 +134,10 @@ def channel_detail(ch_id=None):
                 })
         return jsonify({"error": "Kanal bulunamadı"}), 404
 
-    videos = get_channel_videos(ch_id)
+    # completed_only: ana sayfadaki /api/channels ile AYNI kapsam olsun.
+    # Yarım kalmış analizler sayılınca kanal sayfası ile ana sayfa farklı
+    # video/reklam sayısı gösteriyordu.
+    videos = get_channel_videos(ch_id, completed_only=True)
     brand_totals: dict = {}
     type_totals: dict = {}
     for v in videos:
@@ -311,7 +314,9 @@ def maintenance_auto_sponsors():
             ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
             brand_aliases=ch.get("brand_aliases", {}),
             ignored_brands=ch.get("ignored_brands", []),
-            channel_name=ch.get("name", ""))
+            channel_name=ch.get("name", ""),
+            # Eksikti → bu çağrıda is_auto_main_sponsor hep False dönüyordu
+            auto_main_sponsors=ch.get("auto_main_sponsors", []))
         cands = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD,
                                         ch.get("main_sponsors", []))
         for m in cands:
@@ -491,8 +496,9 @@ def daily_report():
 @api_bp.route("/api/dashboard")
 def dashboard():
     from models.database import get_sponsor_matrix
-    data = get_dashboard_data(since=_since_from_days())
-    data["sponsor_matrix"] = get_sponsor_matrix()
+    since = _since_from_days()
+    data = get_dashboard_data(since=since)
+    data["sponsor_matrix"] = get_sponsor_matrix(since=since)
     return jsonify(data)
 
 
@@ -678,6 +684,9 @@ def video_detail(video_id):
             "detections": detections,
             "brand_report": agg["brand_report"],
             "persistent_overlays": agg["persistent_overlays"],
+            # Süre/olay özeti — panelin birincil metrikleri (okurken hesaplanır,
+            # eski videolarda da güncel modelle görünür)
+            "exposure_summary": agg.get("exposure_summary", {}),
         },
         "channel": {
             "id": v["channel_id"],

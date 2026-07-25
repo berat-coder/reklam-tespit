@@ -1009,14 +1009,25 @@ def get_all_videos(completed_only=True):
         return out
 
 
-def get_sponsor_matrix():
+def get_sponsor_matrix(since=None):
     """Marka → ana sponsoru olduğu kanallar (kanallar-arası sponsorluk matrisi).
     Örn: NESİNE → [NutSpor, Vole] (2 kanal). 'auto' = en az bir kanalda otomatik
-    tespit edildi (uzamsal-zamansal). En çok kanala sahip marka önce."""
+    tespit edildi (uzamsal-zamansal). En çok kanala sahip marka önce.
+
+    since verilirse yalnız o tarihten sonra analiz edilmiş videosu olan kanallar
+    dahil edilir — panelin tarih filtresi matrise de uygulansın diye (eskiden
+    filtre değişince üstteki blok sabit kalıyordu)."""
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, main_sponsors, auto_main_sponsors FROM channels"
         ).fetchall()
+        active_ids = None
+        if since:
+            active_ids = {
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT channel_id FROM videos "
+                    "WHERE completed = 1 AND analyzed_at >= ?", (since,)).fetchall()
+            }
     import re as _re
     _tr = str.maketrans("çğıöşü", "cgiosu")
     def _sk(s):
@@ -1024,6 +1035,8 @@ def get_sponsor_matrix():
     acc = {}
     for r in rows:
         d = dict(r)
+        if active_ids is not None and d["id"] not in active_ids:
+            continue
         cname = d.get("name") or d["id"]
         autos = {(x or "").casefold()
                  for x in json.loads(_col(d, "auto_main_sponsors", None) or "[]")}

@@ -262,6 +262,20 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
   font-size: 10px; color: var(--dim); text-transform: uppercase;
   letter-spacing: 0.05em; margin-top: 6px;
 }
+.metric-note {
+  margin: -4px 0 16px; font-size: 12px; color: var(--muted);
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.metric-help {
+  cursor: pointer; color: var(--accent); text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.kind-chip {
+  font-size: 10px; font-weight: 650; padding: 2px 7px; border-radius: 999px;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+.kind-chip.sponsorluk { background: rgba(37,99,235,.12); color: var(--blue); }
+.kind-chip.spot { background: rgba(217,119,6,.14); color: var(--amber); }
 .stat-tile.red .stat-tile-num { color: var(--red); }
 .stat-tile.amber .stat-tile-num { color: var(--amber); }
 .stat-tile.green .stat-tile-num { color: var(--green); }
@@ -2304,7 +2318,8 @@ function renderDonut(items) {
   return `<div class="donut-wrap">
     <svg class="donut-svg" width="170" height="170" viewBox="0 0 170 170">${paths}
       <text x="85" y="80" text-anchor="middle" fill="var(--text)" font-size="20" font-weight="600">${total}</text>
-      <text x="85" y="98" text-anchor="middle" fill="var(--dim)" font-size="10">tespit</text>
+      <text x="85" y="97" text-anchor="middle" fill="var(--dim)" font-size="9">yerleşim</text>
+      <title>Yerleşim türü tespiti — üstteki kutulardaki süre/çıkış metriklerinden farklı bir sayıdır</title>
     </svg>
     <div class="donut-legend">${legend}</div>
   </div>`;
@@ -2808,6 +2823,7 @@ async function loadVideo(id) {
 
   const v = d.video;
   const ch = d.channel;
+  const xs = v.exposure_summary || {};   // süre/olay özeti (birincil metrikler)
   let html = `
     <div class="page-header">
       <div>
@@ -2828,10 +2844,15 @@ async function loadVideo(id) {
     </div>
 
     <div class="stat-tiles">
-      <div class="stat-tile red"><div class="stat-tile-num">${v.ad_frame_count}</div><div class="stat-tile-lbl">Reklam Frame</div></div>
-      <div class="stat-tile"><div class="stat-tile-num">${v.total_frames}</div><div class="stat-tile-lbl">Toplam Frame</div></div>
-      <div class="stat-tile blue"><div class="stat-tile-num">${Object.keys(v.brand_counts || {}).length}</div><div class="stat-tile-lbl">Tespit Edilen Marka</div></div>
-      <div class="stat-tile amber"><div class="stat-tile-num">${Object.keys(v.type_counts || {}).length}</div><div class="stat-tile-lbl">Reklam Türü</div></div>
+      <div class="stat-tile"><div class="stat-tile-num">${fmtDur(xs.total_exposure_seconds || 0)}</div><div class="stat-tile-lbl" title="Markaların ekranda toplam kaldığı süre">Görünürlük Süresi</div></div>
+      <div class="stat-tile amber"><div class="stat-tile-num">${xs.sponsorship_count || 0}</div><div class="stat-tile-lbl" title="Yayın boyunca ekranda duran kalıcı sponsorluk">Sponsorluk</div></div>
+      <div class="stat-tile red"><div class="stat-tile-num">${xs.spot_count || 0}</div><div class="stat-tile-lbl" title="Ayrı ayrı ekrana gelen reklam çıkışları">Spot Reklam Çıkışı</div></div>
+      <div class="stat-tile blue"><div class="stat-tile-num">${xs.brand_count ?? Object.keys(v.brand_counts || {}).length}</div><div class="stat-tile-lbl">Marka</div></div>
+    </div>
+    <div class="metric-note">
+      ${v.ad_frame_count} reklam karesi · ${v.total_frames} kare analiz edildi ·
+      örnekleme ${xs.interval_seconds || '?'} sn
+      <span class="metric-help" onclick="showMetricHelp()">metrikler ne demek?</span>
     </div>
   `;
 
@@ -3070,7 +3091,12 @@ function brandAvatar(name, lg) {
 function renderBrandReport(report) {
   window._brandReport = report;
   return report.map((b, i) => {
-    const total = b.appearances;
+    // Birincil metrik artık ham görünüm sayısı değil: süre + çıkış + pay.
+    const isSpon = b.kind === 'sponsorluk';
+    const kindChip = `<span class="kind-chip ${isSpon ? 'sponsorluk' : 'spot'}">${isSpon ? 'sponsorluk' : 'spot'}</span>`;
+    const metric = isSpon
+      ? `${b.exposure_label || fmtDur(b.exposure_seconds || 0)} ekranda · %${b.sov_pct ?? 0} pay`
+      : `${b.appearance_count ?? 1} çıkış · ${b.exposure_label || fmtDur(b.exposure_seconds || 0)} · %${b.sov_pct ?? 0} pay`;
     const chips = Object.entries(b.tur_counts || {})
       .sort((a, c) => c[1] - a[1])
       .map(([tur, n]) => `<span class="type-chip clickable" title="Sadece bu türü göster" onclick="event.stopPropagation();showBrandFrames(${i},'${jsq(tur)}')">${esc(tur)} ${n}</span>`).join('');
@@ -3094,7 +3120,8 @@ function renderBrandReport(report) {
         <div class="brand-card-main">
           <div class="brand-card-title">
             <strong class="brand-link" title="Marka panelini aç" onclick="event.stopPropagation();openBrand('${jsq(b.marka)}')">${esc(b.marka)}</strong>
-            <span class="brand-card-count">${total} reklam</span>
+            ${kindChip}
+            <span class="brand-card-count" title="${b.frame_count || 0} kanıt karesi">${metric}</span>
             ${sponsorBadge}
           </div>
           <div class="brand-card-chips">${chips}</div>
@@ -3358,6 +3385,26 @@ async function loadRecentSidebar() {
 }
 
 // ─── Utils ───
+// ─── Metrik sözlüğü ───
+// "Reklam" kelimesi eskiden üç ayrı sayıyı etiketliyordu (kare / marka-görünümü
+// / tür-görünümü) ve sayılar birbirini tutmuyordu. Tek sözlük:
+function showMetricHelp() {
+  const rows = [
+    ['Görünürlük Süresi', 'Markanın ekranda toplam kaldığı süre. Sponsorluk ölçümünün asıl birimi budur.'],
+    ['Sponsorluk', 'Yayın boyunca ekranda duran kalıcı marka (köşe logosu, stüdyo sponsoru). Kaç karede göründüğünden bağımsız olarak <b>1</b> sponsorluk sayılır.'],
+    ['Spot Reklam Çıkışı', 'Ayrı ayrı ekrana gelen reklamlar. Aynı marka farklı zamanlarda 3 kez çıktıysa 3 çıkış.'],
+    ['Pay (%)', 'Markanın toplam görünürlük içindeki oranı — rakiplerle kıyaslamak için (Share of Voice).'],
+    ['Reklam Karesi', 'Ham teknik sayı: reklam içeren analiz karesi. Yalnız detay/kanıt için, raporlarda kullanılmaz.'],
+  ];
+  const body = rows.map(([k, t]) =>
+    `<div style="margin-bottom:12px"><strong>${k}</strong><div style="opacity:.75;margin-top:2px">${t}</div></div>`).join('');
+  $('modalBody').innerHTML =
+    `<h3 style="margin:0 0 14px">Metrikler ne anlama geliyor?</h3>${body}` +
+    `<div style="opacity:.6;font-size:12px;margin-top:6px">Not: kalıcı bir logo 55 karede görünse bile
+     <b>1 sponsorluk</b> sayılır; ekranda kaldığı süre ayrıca ölçülür. Böylece veri şişmez.</div>`;
+  $('modal').classList.add('on');
+}
+
 function fmtDur(s) {
   const t = parseInt(s) || 0;
   const h = Math.floor(t / 3600);
