@@ -558,6 +558,7 @@ def _analyze_video_core(
 
     stream_url = None
     _last_err = None
+    _diag = []          # her client'ın sonucu — hepsi tek mesajda gösterilir
     for _clients in (["tv"], ["web_safari"], ["web"], ["mweb"],
                      ["ios"], ["android_vr"], ["tv_embedded"]):
         cname = _clients[0]
@@ -582,14 +583,18 @@ def _analyze_video_core(
             warn = " | ".join(m[:180] for m in log.msgs[-2:]) or "uyarı yok"
             _last_err = (f"{cname}: format={len(fmts)}, video={len(vids)}, "
                          f"URL'siz video={len(nourl)} → {warn}")
+            _diag.append(f"{cname}[f{len(fmts)}/v{len(vids)}/nourl{len(nourl)}] {warn[:110]}")
             status(_last_err)
         except Exception as e:
             warn = " | ".join(m[:180] for m in log.msgs[-2:])
             _last_err = f"{cname}: {str(e)[:200]}" + (f" | {warn}" if warn else "")
+            _diag.append(f"{cname}[HATA] {(str(e) or warn)[:110]}")
             status(f"Stream client={cname} başarısız → {_last_err[:240]}")
 
     if not stream_url:
-        msg = f"Stream URL bulunamadı — {_last_err or 'hiçbir client format vermedi'}"
+        msg = ("Stream URL bulunamadı — TÜM CLIENT'LAR: "
+               + " ;; ".join(_diag)) if _diag else \
+              f"Stream URL bulunamadı — {_last_err or 'hiçbir client format vermedi'}"
         status(msg)
         _record_fail(msg, video_id)
         on_set_live(status="error", message=msg, progress=0)
