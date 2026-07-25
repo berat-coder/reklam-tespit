@@ -236,6 +236,14 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     auto_keys = {_norm_key(s) for s in (auto_main_sponsors or []) if s}
     once_counted = set()   # (marka_key, anahtar) — videoda bir kez sayılanlar
     total = len(detections)
+    # Kota koruması nedeniyle örneklenen karelerin yalnız bir kısmı Gemini'ye
+    # gider (MAX_API_FRAMES). Kalıcılık oranı ve örnekleme aralığı bu ALT KÜME
+    # üzerinden hesaplanmalı; yoksa hiç bakılmamış kareler paydayı şişirip
+    # sürekli ekranda duran logoyu "seyrek" gösteriyor.
+    analyzed_dets = [d for d in detections if d.get("_api_used", True)]
+    if not analyzed_dets:
+        analyzed_dets = detections
+    total_analyzed = len(analyzed_dets)
     min_conf = _min_confidence_rank()   # eşiğin altındaki kareler sayılmaz
 
     type_counts = {}
@@ -244,11 +252,13 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     brand_acc = {}      # marka_key -> rapor birikteci
     overlay_acc = {}    # (marka_key, konum_key) -> {marka, konum, frames:set}
 
+    # ══ 1. GEÇİŞ: kalıcılık istatistiği ══
+    # Sayımdan ÖNCE hangi markanın "yayın boyunca ekranda duran kalıcı logo"
+    # olduğunu bilmemiz gerekir; yoksa yeni bir sponsor (ör. sol üstteki Clear
+    # logosu) elle işaretlenene kadar her karede ayrı reklam sayılıyordu.
+    prepared = []
     for d in detections:
         idx = d.get("index")
-        secs = d.get("seconds", 0.0) or 0.0
-        ts = d.get("timestamp", "")
-        guven = d.get("guven", "Düşük")
         tespitler = d.get("tespitler", []) or []
         markalar = d.get("markalar", []) or []
 
@@ -266,6 +276,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
                 continue
             seen_b.add(k)
             frame_brands.append(nm)
+        prepared.append((d, frame_brands))
 
         # ── Kalıcı bindirme: TÜM kareler (reklam olmayanlar dahil), kanal logosu dahil ──
         for nm in frame_brands:
@@ -280,6 +291,37 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
                 o = overlay_acc.setdefault(_norm_key(nm2), {"marka": nm2, "frames": set()})
                 kd = o.setdefault("konumlar", {})
                 kd[kn] = kd.get(kn, 0) + 1
+
+    # OTOMATİK kalıcı sponsor tespiti — elle işaretleme GEREKMEZ.
+    # Oran, yalnız GEMINI'YE GÖNDERİLEN kareler üzerinden hesaplanır: kota
+    # koruması yüzünden 193 karenin ~60'ı analiz ediliyor; paydaya hiç
+    # bakılmamış kareleri katmak oranı %92'den %28'e düşürüp kalıcı logoyu
+    # görünmez yapıyordu.
+    auto_persistent = set()
+    for k, o in overlay_acc.items():
+        if k in logo_keys:
+            continue                       # kanalın kendi logosu zaten sayılmıyor
+        fc = len(o["frames"])
+        ratio = fc / total_analyzed if total_analyzed else 0
+        kn_counts = o.get("konumlar", {})
+        kn_total = sum(kn_counts.values())
+        dom_n = max(kn_counts.values()) if kn_counts else 0
+        consistency = (dom_n / kn_total) if kn_total else 0.0
+        if fc >= 3 and (ratio >= 0.80
+                        or (ratio >= 0.40 and kn_total >= 3 and consistency >= 0.60)):
+            auto_persistent.add(k)
+    # Kalıcı görünümü videoda 1 kez sayılacak markalar: elle işaretlenenler +
+    # otomatik tespit edilenler.
+    passive_once_keys = active_only_keys | auto_persistent
+
+    # ══ 2. GEÇİŞ: sayım ══
+    for d, frame_brands in prepared:
+        idx = d.get("index")
+        secs = d.get("seconds", 0.0) or 0.0
+        ts = d.get("timestamp", "")
+        guven = d.get("guven", "Düşük")
+        tespitler = d.get("tespitler", []) or []
+        markalar = d.get("markalar", []) or []
 
         if not d.get("reklam_var"):
             continue
@@ -325,7 +367,7 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
                 repeats = list(pairs)
                 pairs = []
             for (t, k) in pairs:
-                if bk in active_only_keys and t in _PASSIVE_TURS:
+                if bk in passive_once_keys and t in _PASSIVE_TURS:
                     okey = (bk, "__sponsor_passive__")
                 elif t in _ONCE_PER_VIDEO_TURS:
                     okey = (bk, t)
@@ -426,7 +468,8 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     persistent = []
     for o in overlay_acc.values():
         fc = len(o["frames"])
-        ratio = fc / total if total else 0
+        # Payda: analiz edilen kareler (bkz. total_analyzed açıklaması)
+        ratio = fc / total_analyzed if total_analyzed else 0
         bk = _norm_key(o["marka"])
         is_logo = bk in logo_keys
         is_sponsor = bk in sponsor_keys
@@ -460,7 +503,10 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
     persistent.sort(key=lambda x: x["ratio"], reverse=True)
 
     # ── Süre / olay modeli için hazırlık ──
-    interval = _sampling_interval(detections)
+    # Aralık ANALİZ EDİLEN kareler üzerinden: markalar yalnız o karelerde
+    # görülebilir, dolayısıyla bir görünümün temsil ettiği süre iki analiz
+    # karesi arasındaki mesafedir (ör. 17 sn değil 34 sn).
+    interval = _sampling_interval(analyzed_dets)
     gap = interval * 2.5          # bu kadar boşluk = marka ekrandan çıkmış
     # Analiz edilen zaman aralığı (video süresi yerine örneklenen span)
     all_secs = [d.get("seconds", 0.0) or 0.0 for d in detections]
@@ -536,6 +582,8 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         # ── Video geneli süre/olay özeti ──
         "exposure_summary": {
             "interval_seconds": round(interval, 1),
+            "analyzed_frames": total_analyzed,
+            "sampled_frames": total,
             "span_seconds": round(span_seconds, 1),
             "total_exposure_seconds": round(total_exposure, 1),
             "sponsorship_count": sum(1 for b in brand_report if b["kind"] == "sponsorluk"),

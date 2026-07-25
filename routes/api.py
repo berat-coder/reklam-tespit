@@ -687,6 +687,11 @@ def video_detail(video_id):
             # Süre/olay özeti — panelin birincil metrikleri (okurken hesaplanır,
             # eski videolarda da güncel modelle görünür)
             "exposure_summary": agg.get("exposure_summary", {}),
+            # Kayıtlı sütun eski kurallarla hesaplanmış olabilir; detay sayfası
+            # kendi içinde tutarlı olsun diye GÜNCEL değer de gönderilir.
+            # (Panel/kanal toplamları kayıtlı değeri kullanmaya devam eder —
+            #  geçmişe uygulamak için Ayarlar'daki yeniden hesaplama.)
+            "ad_frame_count_live": agg.get("ad_frame_count", 0),
         },
         "channel": {
             "id": v["channel_id"],

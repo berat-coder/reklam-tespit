@@ -2850,7 +2850,8 @@ async function loadVideo(id) {
       <div class="stat-tile blue"><div class="stat-tile-num">${xs.brand_count ?? Object.keys(v.brand_counts || {}).length}</div><div class="stat-tile-lbl">Marka</div></div>
     </div>
     <div class="metric-note">
-      ${v.ad_frame_count} reklam karesi · ${v.total_frames} kare analiz edildi ·
+      ${v.ad_frame_count_live ?? v.ad_frame_count} reklam karesi ·
+      ${v.total_frames} kare örneklendi · ${xs.analyzed_frames ?? '?'} kare incelendi ·
       örnekleme ${xs.interval_seconds || '?'} sn
       <span class="metric-help" onclick="showMetricHelp()">metrikler ne demek?</span>
     </div>
