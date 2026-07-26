@@ -158,6 +158,12 @@ def _detection_rules(channel_logos):
   Pazaryerini "markalar" dizisine EKLEME; istersen ayrı tespit olarak
   tur="Satış Kanalı" ver. Pazaryeri ANCAK kendi kurumsal reklamını yapıyorsa
   (kendi kampanyası, kendi sloganı) gerçek reklamveren sayılır.
+- 👕 REKLAMIN İÇİNDEKİ ÜRÜN MARKALARI: bir mağaza/marka reklamında gösterilen
+  ürünlerin üzerindeki BAŞKA markalar reklamveren DEĞİLDİR (ör. BOYNER reklamında
+  gösterilen kıyafetin markası, bir market reklamındaki ürün ambalajları).
+  Reklamveren, reklamı İMZALAYAN markadır: logosu kampanya/slogan/"hemen al"
+  çağrısıyla birlikte duran marka. Ürün markasını "markalar" dizisine EKLEME;
+  istersen ayrı tespit olarak tur="Ürün Markası" ver.
 - FUTBOL KULÜBÜ ARMASI / TAKIM LOGOSU (Fenerbahçe, Galatasaray, Bayern, Real
   Madrid…) — kulüp kimliği, REKLAM DEĞİL
 - Lig / turnuva / federasyon logoları (UEFA, FIFA, TFF, Süper Lig, Şampiyonlar Ligi)
@@ -182,13 +188,22 @@ def _detection_rules(channel_logos):
 - Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
 - EMİN DEĞİLSEN guven="Düşük" ver. Tahmin yürütme; okuyamadığın bir logoyu
   "olabilir" diye yazma. Yanlış marka yazmak, hiç yazmamaktan kötüdür.
-- HER tespit nesnesinde "marka" alanını doldur (o tespit hangi markaya aitse).
+- ⚠️ BENZER MARKALARI KARIŞTIRMA — logodaki YAZIYI oku, kategoriden tahmin etme.
+  Sık karışanlar: Getir ↔ Migros Hemen ↔ Banabi ↔ Yemeksepeti Market;
+  Trendyol ↔ Hepsiburada ↔ n11 ↔ Amazon; Nesine ↔ Bilyoner ↔ Misli ↔ Tuttur;
+  Papara ↔ Param ↔ ininal; Ziraat ↔ Vakıfbank ↔ Halkbank.
+  Aynı sektörde olmaları aynı marka oldukları anlamına GELMEZ. Yazıyı net
+  okuyamıyorsan markayı boş bırak ve guven="Düşük" ver.
+- HER tespit nesnesinde "marka" VE "konum" alanlarını MUTLAKA doldur — bunlar
+  boş kalırsa hangi markanın nerede durduğu kaybolur. Marka okunamıyorsa
+  "marka" boş string olabilir ama alan yine de bulunmalı.
   Aynı karede 2 marka varsa 2 AYRI tespit nesnesi yaz, her birinde kendi markası.
 - "tur" alanına SADECE ŞU LİSTEDEN TEK BİR kelime yaz — birden fazla yazma,
   eğik çizgi (/) kullanma, parantez/açıklama EKLEME:
   {tur_list}
   ("Forma" = giyilen forma sponsoru, "Basın Panosu" = kulüp backdrop'u,
-   "Satış Kanalı" = pazaryeri/kargo — bu üçü reklam sayılmaz, sadece kayıt için)
+   "Satış Kanalı" = pazaryeri/kargo, "Ürün Markası" = başka markanın reklamında
+   görünen ürün markası — bu dördü reklam sayılmaz, sadece kayıt için)
 - "konum" alanına SADECE ŞU LİSTEDEN TEK BİR değer yaz: {konum_list}
 - "markalar" dizisine karedeki TÜM reklam markalarını yaz — ANCAK kanal logosu,
   kulüp arması, OYUNCU FORMASI sponsoru, BASIN PANOSU markaları ve SATIŞ KANALI
@@ -201,7 +216,12 @@ def _detection_rules(channel_logos):
 TUR_VALUES = [
     "Pre-Roll", "Mid-Roll", "Video Reklam", "Alt Bant", "Köşe Banner",
     "Sponsor Bandı", "Ürün Yerleştirme", "Geçiş Karesi", "Arka Plan",
-    "Forma", "Basın Panosu", "Satış Kanalı",
+    # Reklam sayılmayan yerleşimler (kayıt için tutulur):
+    "Forma",          # oyuncunun giydiği forma sponsoru
+    "Basın Panosu",   # kulüp backdrop'u / stat tabelası
+    "Satış Kanalı",   # "Trendyol'da satılır" — reklamveren ürünün markası
+    "Ürün Markası",   # başka bir markanın reklamında görünen ürün markası
+                      # (Boyner reklamındaki kıyafet markası gibi)
 ]
 KONUM_VALUES = [
     "sol üst", "sağ üst", "sol alt", "sağ alt",
@@ -230,6 +250,11 @@ _BATCH_SCHEMA = {
                         "marka": {"type": "STRING"},
                         "detay": {"type": "STRING"},
                     },
+                    # marka/konum ZORUNLU: model bunları boş bırakınca marka↔tür
+                    # eşleşmesi ve "hep aynı köşede" uzamsal sinyali kayboluyordu
+                    # (kalıcı logo tespit edilemiyordu). Marka okunamıyorsa boş
+                    # string yazılır — alan yine de bulunur.
+                    "required": ["tur", "konum", "marka"],
                 },
             },
             "ozet": {"type": "STRING"},

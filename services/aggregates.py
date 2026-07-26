@@ -25,6 +25,9 @@ _TUR_CANON = [
     # Pazaryeri/kargo/banka: reklamın sahibi değil, satış kanalı → sayılmaz.
     ("satış kanal", "Satış Kanalı"), ("pazaryeri", "Satış Kanalı"),
     ("pazar yeri", "Satış Kanalı"), ("marketplace", "Satış Kanalı"),
+    # Başka bir markanın reklamında görünen ürün markası (Boyner reklamındaki
+    # kıyafet markası gibi) — reklamveren o değil → sayılmaz.
+    ("ürün markası", "Ürün Markası"), ("urun markasi", "Ürün Markası"),
     ("pre-roll", "Pre-Roll"), ("pre roll", "Pre-Roll"),
     ("mid-roll", "Mid-Roll"), ("mid roll", "Mid-Roll"),
     ("video reklam", "Video Reklam"),

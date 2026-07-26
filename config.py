@@ -135,8 +135,11 @@ DEFAULT_SPORTS_IGNORE = [
 #                   tabelası: kulübün sponsoru, yayının reklamı değil
 #  • Satış Kanalı — pazaryeri/kargo/banka ("Trendyol'da satılır"): asıl
 #                   reklamveren ürünün markası, pazaryeri değil
+#  • Ürün Markası — başka bir markanın reklamında görünen ürün markası
+#                   (BOYNER reklamındaki kıyafet markası): reklamveren o değil
 # Overlay/alt bant/tam ekran/ürün yerleştirme/LED ve KANALIN stüdyo dekoru sayılır.
-DEFAULT_EXCLUDED_PLACEMENTS = ["Forma", "Basın Panosu", "Satış Kanalı"]
+DEFAULT_EXCLUDED_PLACEMENTS = ["Forma", "Basın Panosu", "Satış Kanalı",
+                               "Ürün Markası"]
 
 # Sayıma girmek için gereken en düşük güven: "Yüksek" | "Orta" | "Düşük".
 # Gemini'nin "Düşük" güvenle yazdığı tahminler sayılmaz (kanıtta görünür).
@@ -207,7 +210,19 @@ def load_config():
             if saved.get("global_ignored_brands") is not None:
                 cfg["global_ignored_brands"] = saved["global_ignored_brands"]
             if saved.get("excluded_placements") is not None:
-                cfg["excluded_placements"] = saved["excluded_placements"]
+                # Kayıtlı liste kazanır AMA sonradan eklenen yeni yerleşim
+                # türleri (Basın Panosu, Satış Kanalı, Ürün Markası…) eski
+                # kurulumlarda listede olmadığı için sessizce sayılmaya devam
+                # ederdi. Kullanıcının hiç görmediği yeni türler bir kez eklenir;
+                # sonradan Ayarlar'dan çıkarılabilir.
+                seen = saved.get("known_placements") or []
+                merged = list(saved["excluded_placements"])
+                for p in DEFAULT_EXCLUDED_PLACEMENTS:
+                    if p not in merged and p not in seen:
+                        merged.append(p)
+                cfg["excluded_placements"] = merged
+            if saved.get("min_confidence"):
+                cfg["min_confidence"] = saved["min_confidence"]
             if isinstance(saved.get("frame_retention"), dict):
                 fr = dict(DEFAULT_FRAME_RETENTION)
                 fr.update({k: saved["frame_retention"][k]
@@ -220,6 +235,13 @@ def load_config():
 
 
 def save_config(cfg):
+    # Kullanıcının GÖRDÜĞÜ yerleşim türlerini damgala: böylece bir türü bilerek
+    # listeden çıkardığında geri eklenmez, ama ileride eklenen YENİ türler bir
+    # kez otomatik devreye girer (bkz. load_config).
+    if cfg.get("excluded_placements") is not None:
+        cfg = dict(cfg)
+        cfg["known_placements"] = sorted(
+            set(cfg.get("known_placements") or []) | set(DEFAULT_EXCLUDED_PLACEMENTS))
     _CONFIG_FILE.write_text(
         json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
     )
