@@ -145,6 +145,10 @@ DEFAULT_EXCLUDED_PLACEMENTS = ["Forma", "Basın Panosu", "Satış Kanalı",
 # Gemini'nin "Düşük" güvenle yazdığı tahminler sayılmaz (kanıtta görünür).
 DEFAULT_MIN_CONFIDENCE = os.environ.get("MIN_CONFIDENCE", "Orta")
 
+# Tahmini medya değeri (EMV): saniye başına TL. Kanal bazında Ayarlar'dan
+# değiştirilebilir; burada global varsayılan. EMV = süre × ücret × belirginlik.
+DEFAULT_EMV_RATE = _float_env("EMV_RATE", 12.0)
+
 DEFAULT_CHANNELS = [
     "https://www.youtube.com/@343digital",
     "https://www.youtube.com/@eskiacikonline",
@@ -196,6 +200,7 @@ def load_config():
         "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
         "excluded_placements": list(DEFAULT_EXCLUDED_PLACEMENTS),
         "min_confidence": DEFAULT_MIN_CONFIDENCE,
+        "emv_rate": DEFAULT_EMV_RATE,
         "frame_retention": dict(DEFAULT_FRAME_RETENTION),
     }
     # config.json varsa üzerine yazar — UI'dan yapılan değişiklik her zaman kazanır

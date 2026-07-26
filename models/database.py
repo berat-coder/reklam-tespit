@@ -112,6 +112,13 @@ _MIGRATIONS = [
     ("live_seen", "attempts", "INTEGER NOT NULL DEFAULT 0"),
     ("live_seen", "last_attempt", "TEXT"),
     ("live_seen", "error", "TEXT NOT NULL DEFAULT ''"),
+    # Süre/olay modeli: marka başına görünürlük saniyesi, olay sayısı, tür ve
+    # belirginlik. Panel/trend/EMV bunları okur — okuma anında tüm videolar için
+    # yeniden hesaplamak pahalı olurdu.
+    # {"Nesine": {"sec": 2280.0, "app": 1, "kind": "sponsorluk", "prom": 0.35}}
+    ("videos", "brand_exposure", "TEXT NOT NULL DEFAULT '{}'"),
+    # Kanal başına saniye başına medya değeri (TL). 0 → global varsayılan.
+    ("channels", "emv_rate", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -802,14 +809,16 @@ def is_video_completed(video_id):
 def upsert_video(video_id, channel_id, title="", url="", duration=0,
                  thumbnail="", analyzed_at=None, total_frames=0, api_calls=0,
                  ad_frame_count=0, type_counts=None, brand_counts=None,
-                 desc_brands=None, persistent_overlays=None, completed=False):
+                 desc_brands=None, persistent_overlays=None, completed=False,
+                 brand_exposure=None):
     with get_db() as conn:
         conn.execute("""
             INSERT INTO videos (
                 id, channel_id, title, url, duration, thumbnail, analyzed_at,
                 total_frames, api_calls, ad_frame_count,
-                type_counts, brand_counts, desc_brands, persistent_overlays, completed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                type_counts, brand_counts, desc_brands, persistent_overlays, completed,
+                brand_exposure
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title         = COALESCE(NULLIF(excluded.title, ''),     videos.title),
                 url           = COALESCE(NULLIF(excluded.url, ''),       videos.url),
@@ -823,6 +832,7 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
                 brand_counts  = excluded.brand_counts,
                 desc_brands   = COALESCE(excluded.desc_brands,           videos.desc_brands),
                 persistent_overlays = excluded.persistent_overlays,
+                brand_exposure = excluded.brand_exposure,
                 completed     = excluded.completed
         """, (
             video_id, channel_id, title, url, duration, thumbnail,
@@ -832,6 +842,7 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
             json.dumps(desc_brands or [], ensure_ascii=False),
             json.dumps(persistent_overlays or [], ensure_ascii=False),
             int(completed),
+            json.dumps(brand_exposure or {}, ensure_ascii=False),
         ))
 
 
@@ -943,6 +954,41 @@ def update_detection(video_id, index, action, tespit_index=None, marka=None,
         ))
 
 
+def _exposure_map(agg):
+    """compute_aggregates çıktısındaki brand_report'u kompakt bir süre haritasına
+    çevirir; panel/trend/EMV bunu okur (her okumada tüm videoları yeniden
+    hesaplamak pahalı olurdu).
+    {"Nesine": {"sec": 2280.0, "app": 1, "kind": "sponsorluk", "prom": 0.35}}"""
+    out = {}
+    for b in (agg or {}).get("brand_report") or []:
+        out[b["marka"]] = {
+            "sec": b.get("exposure_seconds", 0.0),
+            "app": b.get("appearance_count", 0),
+            "kind": b.get("kind", "spot"),
+            "prom": b.get("prominence", 0.5),
+        }
+    return out
+
+
+def emv_of(seconds, prominence, rate):
+    """Tahmini medya değeri (TL) = süre × saniye ücreti × belirginlik.
+    Belirginlik: tam ekran reklam, köşe logosundan değerlidir."""
+    try:
+        return round(float(seconds) * float(rate) * float(prominence), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def channel_emv_rate(ch):
+    """Kanalın saniye başına TL değeri; tanımlı değilse global varsayılan."""
+    from config import DEFAULT_EMV_RATE
+    try:
+        r = float((ch or {}).get("emv_rate") or 0)
+    except (TypeError, ValueError):
+        r = 0.0
+    return r if r > 0 else DEFAULT_EMV_RATE
+
+
 def recompute_video_aggregates(video_id):
     """Mevcut tespitlerden video agregatlarını sıfırdan yeniden hesaplar ve kaydeder.
     Düzeltme/silme veya 'kanal logosu' işaretleme sonrası çağrılır. agg döner."""
@@ -968,6 +1014,7 @@ def recompute_video_aggregates(video_id):
         type_counts=agg["type_counts"],
         brand_counts=agg["brand_counts"],
         persistent_overlays=agg["persistent_overlays"],
+        brand_exposure=_exposure_map(agg),
         completed=v.get("completed", True),
     )
     return agg
@@ -1052,6 +1099,171 @@ def get_sponsor_matrix(since=None):
             if m.casefold() in autos:
                 e["auto"] = True
     return sorted(acc.values(), key=lambda x: -len(x["channels"]))
+
+
+def _backfill_exposure(video_id):
+    """Bir videonun süre/olay haritasını hesaplayıp YALNIZ brand_exposure
+    kolonuna yazar (hedefli UPDATE — upsert_video diğer agregaları koşulsuz
+    ezerdi). Gemini çağrısı yok; mevcut tespitlerden hesaplanır."""
+    from services.aggregates import compute_aggregates
+    v = get_video(video_id)
+    if not v:
+        return {}
+    ch = get_channel(v["channel_id"]) or {}
+    agg = compute_aggregates(get_detections(video_id), ch.get("channel_logos", []),
+                             ch.get("main_sponsors", []),
+                             ch.get("sponsor_active_only", []),
+                             brand_aliases=ch.get("brand_aliases", {}),
+                             ignored_brands=ch.get("ignored_brands", []),
+                             channel_name=ch.get("name", ""),
+                             auto_main_sponsors=ch.get("auto_main_sponsors", []))
+    exp = _exposure_map(agg)
+    with get_db() as conn:
+        conn.execute("UPDATE videos SET brand_exposure = ? WHERE id = ?",
+                     (json.dumps(exp, ensure_ascii=False), video_id))
+    return exp
+
+
+def get_intelligence(days=0):
+    """Sponsorluk istihbarat katmanı — süre bazlı (brand_exposure) hesaplanır.
+
+    Döner:
+      brands   : marka bazında görünürlük, çıkış, pay, EMV, kanal/video sayısı
+      matrix   : kanal × marka ısı haritası (rakip karşılaştırması)
+      trend    : haftalık görünürlük eğrisi (marka bazında ilk 6)
+      alerts   : yeni marka / kaybolan sponsor / ani değişim uyarıları
+      totals   : toplam görünürlük ve EMV
+    """
+    from datetime import timedelta
+    now = datetime.utcnow()
+    since = (now - timedelta(days=days)).isoformat() if days else None
+    # Uyarılar için bir önceki EŞİT uzunlukta dönem
+    prev_since = (now - timedelta(days=days * 2)).isoformat() if days else None
+
+    videos = get_all_videos(completed_only=True)
+    ch_cache, ch_rate = {}, {}
+    backfill_budget = 25      # istek başına en fazla bu kadar video doldurulur
+
+    def _ch(cid):
+        if cid not in ch_cache:
+            c = get_channel(cid) or {}
+            ch_cache[cid] = c
+            ch_rate[cid] = channel_emv_rate(c)
+        return ch_cache[cid]
+
+    brands, matrix, weekly = {}, {}, {}
+    prev_sec = {}
+    last_seen = {}
+    total_sec = total_emv = 0.0
+
+    for v in videos:
+        at = v.get("analyzed_at") or ""
+        exp = v.get("brand_exposure") or {}
+        if not exp:
+            # Süre modeli öncesi kaydedilmiş video → SADECE brand_exposure
+            # kolonunu doldur. Diğer agregalara (ad_frame_count, brand_counts)
+            # dokunulmaz; kullanıcı "geçmiş veri değişmesin" dedi. Bu kolon
+            # yeni olduğu için doldurmak mevcut hiçbir sayıyı değiştirmez.
+            if backfill_budget <= 0:
+                continue
+            backfill_budget -= 1
+            exp = _backfill_exposure(v["id"])
+            if not exp:
+                continue
+        cid = v["channel_id"]
+        cname = (_ch(cid).get("name") or cid)
+        rate = ch_rate.get(cid, 0)
+        in_period = (not since) or at >= since
+        in_prev = bool(prev_since) and prev_since <= at < (since or "")
+
+        for marka, e in exp.items():
+            sec = float(e.get("sec") or 0)
+            if sec <= 0:
+                continue
+            if at > last_seen.get(marka, ""):
+                last_seen[marka] = at
+            if in_prev:
+                prev_sec[marka] = prev_sec.get(marka, 0.0) + sec
+            if not in_period:
+                continue
+            emv = emv_of(sec, e.get("prom", 0.5), rate)
+            b = brands.setdefault(marka, {
+                "marka": marka, "seconds": 0.0, "appearances": 0, "emv": 0.0,
+                "kind": e.get("kind", "spot"), "channels": set(), "videos": 0,
+            })
+            b["seconds"] += sec
+            b["appearances"] += int(e.get("app") or 0)
+            b["emv"] += emv
+            b["channels"].add(cname)
+            b["videos"] += 1
+            if e.get("kind") == "sponsorluk":
+                b["kind"] = "sponsorluk"
+            matrix.setdefault(marka, {})
+            matrix[marka][cname] = round(matrix[marka].get(cname, 0.0) + sec)
+            total_sec += sec
+            total_emv += emv
+            # Haftalık trend (ISO hafta başlangıcı)
+            try:
+                dt = datetime.fromisoformat(at[:19])
+                wk = (dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d")
+                weekly.setdefault(marka, {})
+                weekly[marka][wk] = round(weekly[marka].get(wk, 0.0) + sec)
+            except Exception:
+                pass
+
+    out = []
+    for b in brands.values():
+        out.append({**b,
+                    "channels": sorted(b["channels"]),
+                    "channel_count": len(b["channels"]),
+                    "seconds": round(b["seconds"]),
+                    "emv": round(b["emv"]),
+                    "sov_pct": round(100 * b["seconds"] / total_sec, 1) if total_sec else 0.0})
+    out.sort(key=lambda x: -x["seconds"])
+
+    # ── Uyarılar: yeni marka, kaybolan sponsor, ani değişim ──
+    alerts = []
+    if days:
+        cutoff = (now - timedelta(days=days * 3)).isoformat()
+        for b in out[:25]:
+            m, cur = b["marka"], b["seconds"]
+            old = prev_sec.get(m, 0.0)
+            if old == 0 and cur > 0:
+                alerts.append({"type": "new", "marka": m,
+                               "text": f"{m} ilk kez göründü · {_dur(cur)}"})
+            elif old > 0:
+                chg = (cur - old) / old * 100
+                if chg >= 100:
+                    alerts.append({"type": "up", "marka": m,
+                                   "text": f"{m} görünürlüğü %{round(chg)} arttı"})
+                elif chg <= -60:
+                    alerts.append({"type": "down", "marka": m,
+                                   "text": f"{m} görünürlüğü %{abs(round(chg))} azaldı"})
+        for m, seen_at in last_seen.items():
+            if seen_at < cutoff and m not in {b["marka"] for b in out}:
+                alerts.append({"type": "gone", "marka": m,
+                               "text": f"{m} bu dönemde hiç görünmedi"})
+    alerts = alerts[:6]
+
+    return {
+        "brands": out[:30],
+        "matrix": [{"marka": m, "channels": c}
+                   for m, c in sorted(matrix.items(),
+                                      key=lambda x: -sum(x[1].values()))][:15],
+        "trend": {m: weekly[m] for m in [b["marka"] for b in out[:6]] if m in weekly},
+        "alerts": alerts,
+        "totals": {"exposure_seconds": round(total_sec),
+                   "exposure_label": _dur(total_sec),
+                   "emv": round(total_emv),
+                   "brand_count": len(out)},
+    }
+
+
+def _dur(sec):
+    sec = int(round(sec or 0))
+    h, r = divmod(sec, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}s {m}dk" if h else (f"{m}dk {s}sn" if m else f"{s}sn")
 
 
 def get_dashboard_data(since=None):
@@ -1235,6 +1447,7 @@ def _vid(row):
         "brand_counts": json.loads(row["brand_counts"] or "{}"),
         "desc_brands": json.loads(row["desc_brands"] or "[]"),
         "persistent_overlays": json.loads(_col(row, "persistent_overlays") or "[]"),
+        "brand_exposure": json.loads(_col(row, "brand_exposure") or "{}"),
         "completed": bool(row["completed"]),
     }
 

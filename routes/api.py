@@ -502,6 +502,18 @@ def dashboard():
     return jsonify(data)
 
 
+@api_bp.route("/api/intelligence")
+def intelligence():
+    """Sponsorluk istihbaratı: süre bazlı marka sıralaması, kanal×marka matrisi,
+    haftalık trend, değişim uyarıları ve tahmini medya değeri (EMV)."""
+    from models.database import get_intelligence
+    try:
+        days = int(request.args.get("days", 0))
+    except (TypeError, ValueError):
+        days = 0
+    return jsonify(get_intelligence(days=days))
+
+
 @api_bp.route("/api/brand/<path:name>")
 def brand_detail(name):
     return jsonify(get_brand_appearances(name))

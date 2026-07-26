@@ -262,6 +262,32 @@ h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.025em; }
   font-size: 10px; color: var(--dim); text-transform: uppercase;
   letter-spacing: 0.05em; margin-top: 6px;
 }
+/* ── İstihbarat katmanı ── */
+.alert-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.alert-chip {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12px; padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg2); color: var(--text);
+}
+.alert-chip:hover { border-color: var(--accent); }
+.alert-chip.new  { border-color: rgba(37,99,235,.45); }
+.alert-chip.up   { border-color: rgba(34,197,94,.45); }
+.alert-chip.down { border-color: rgba(217,119,6,.45); }
+.alert-chip.gone { opacity: .75; }
+.section-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.bb-sub { font-size: 11px; color: var(--muted); font-weight: 500; }
+.trend-wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.trend-svg { flex: 1; min-width: 280px; max-width: 100%; height: auto; }
+.mx-scroll { overflow-x: auto; }
+.mx-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.mx-table th, .mx-table td {
+  border: 1px solid var(--border); padding: 6px 8px; text-align: center;
+  white-space: nowrap;
+}
+.mx-table th { font-weight: 600; color: var(--muted); font-size: 11px; }
+.mx-brand { text-align: left !important; font-weight: 600; cursor: pointer; }
+.mx-brand:hover { color: var(--accent); }
+.mx-cell { font-size: 11px; color: var(--text); }
 .metric-note {
   margin: -4px 0 16px; font-size: 12px; color: var(--muted);
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
@@ -2601,10 +2627,16 @@ function dateFilterBar(active, onclickFn) {
 
 async function loadDashboard() {
   const days = state.dashDays || 0;
-  const r = await fetch('/api/dashboard?days=' + days);
+  const [r, ri] = await Promise.all([
+    fetch('/api/dashboard?days=' + days),
+    fetch('/api/intelligence?days=' + days),
+  ]);
   const d = await r.json();
+  const intel = await ri.json().catch(() => ({}));
   window._dashData = d;
+  window._intel = intel;
   const t = d.totals || {};
+  const it = intel.totals || {};
   let html = `
     <div class="page-header">
       <div>
@@ -2617,12 +2649,18 @@ async function loadDashboard() {
       </div>
     </div>
     ${dateFilterBar(days, 'setDashDays')}
+    ${renderAlerts(intel.alerts || [])}
     <div class="stat-tiles">
-      <div class="stat-tile"><div class="stat-tile-num">${t.channels||0}</div><div class="stat-tile-lbl">Kanal</div></div>
+      <div class="stat-tile"><div class="stat-tile-num">${it.exposure_label || '—'}</div><div class="stat-tile-lbl">Toplam Görünürlük</div></div>
+      <div class="stat-tile green"><div class="stat-tile-num">${fmtTL(it.emv)}</div><div class="stat-tile-lbl" title="Süre × saniye ücreti × belirginlik">Tahmini Medya Değeri</div></div>
       <div class="stat-tile"><div class="stat-tile-num">${t.videos||0}</div><div class="stat-tile-lbl">Analiz Edilen Video</div></div>
-      <div class="stat-tile red"><div class="stat-tile-num">${t.ad_frames||0}</div><div class="stat-tile-lbl">Toplam Reklam Karesi</div></div>
-      <div class="stat-tile blue"><div class="stat-tile-num">${t.brands||0}</div><div class="stat-tile-lbl">Benzersiz Marka</div></div>
+      <div class="stat-tile blue"><div class="stat-tile-num">${it.brand_count ?? t.brands ?? 0}</div><div class="stat-tile-lbl">Marka</div></div>
     </div>
+    <div class="metric-note">${t.channels||0} kanal · ${t.ad_frames||0} reklam karesi (ham)
+      <span class="metric-help" onclick="showMetricHelp()">metrikler ne demek?</span></div>
+    ${renderIntelBrands(intel.brands || [])}
+    ${renderTrend(intel.trend || {})}
+    ${renderMatrix(intel.matrix || [])}
     ${renderSponsorMatrix(d.sponsor_matrix || [])}
     <div class="section">
       <div class="section-head">
@@ -3386,6 +3424,111 @@ async function loadRecentSidebar() {
 }
 
 // ─── Utils ───
+// ─── İstihbarat katmanı (EMV · rakip matrisi · trend · uyarılar) ───
+
+function fmtTL(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return '₺' + (v / 1e6).toFixed(1).replace('.', ',') + 'M';
+  if (v >= 1e3) return '₺' + Math.round(v / 1e3) + 'B';
+  return '₺' + Math.round(v);
+}
+
+const _ALERT_ICON = { new: 'ti-sparkles', up: 'ti-trending-up',
+                      down: 'ti-trending-down', gone: 'ti-eye-off' };
+
+function renderAlerts(alerts) {
+  if (!alerts.length) return '';
+  return `<div class="alert-strip">` + alerts.map(a =>
+    `<div class="alert-chip ${a.type}" onclick="openBrand('${jsq(a.marka)}')">
+       <i class="ti ${_ALERT_ICON[a.type] || 'ti-bell'}"></i>${esc(a.text)}</div>`).join('') +
+    `</div>`;
+}
+
+function renderIntelBrands(brands) {
+  if (!brands.length) return '';
+  const max = Math.max(...brands.map(b => b.seconds)) || 1;
+  const rows = brands.slice(0, 15).map(b => `
+    <div class="brand-bar-row" onclick="openBrand('${jsq(b.marka)}')">
+      ${brandAvatar(b.marka)}
+      <div class="brand-bar-main">
+        <div class="brand-bar-name">${esc(b.marka)}
+          <span class="kind-chip ${b.kind}">${b.kind}</span></div>
+        <div class="brand-bar-track"><div class="brand-bar-fill" style="width:${100*b.seconds/max}%"></div></div>
+      </div>
+      <div class="brand-bar-count">
+        <div>${_durTr(b.seconds)} · %${b.sov_pct}</div>
+        <div class="bb-sub">${fmtTL(b.emv)} · ${b.channel_count} kanal</div>
+      </div>
+    </div>`).join('');
+  return `<div class="section">
+    <div class="section-head"><div class="section-title-lg">Görünürlük Sıralaması</div>
+      <div class="section-sub">ekranda kalma süresine göre · pay ve tahmini medya değeri</div></div>
+    ${rows}</div>`;
+}
+
+function _durTr(sec) {
+  sec = Math.round(sec || 0);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h ? `${h}s ${m}dk` : (m ? `${m}dk` : `${sec}sn`);
+}
+
+// Haftalık görünürlük eğrisi — elle çizilen SVG (dış kütüphane yok)
+function renderTrend(trend) {
+  const brands = Object.keys(trend || {});
+  if (!brands.length) return '';
+  const weeks = [...new Set(brands.flatMap(b => Object.keys(trend[b])))].sort();
+  if (weeks.length < 2) return '';
+  const W = 560, H = 150, PAD = 24;
+  const max = Math.max(...brands.flatMap(b => Object.values(trend[b]))) || 1;
+  const colors = ['#5a8cff', '#ff6b35', '#44cc88', '#ffaa22', '#8b5cf6', '#22ccaa'];
+  const x = i => PAD + (W - 2 * PAD) * (weeks.length > 1 ? i / (weeks.length - 1) : 0.5);
+  const y = v => H - PAD - (H - 2 * PAD) * (v / max);
+  const lines = brands.map((b, bi) => {
+    const pts = weeks.map((w, i) => `${x(i).toFixed(1)},${y(trend[b][w] || 0).toFixed(1)}`).join(' ');
+    return `<polyline points="${pts}" fill="none" stroke="${colors[bi % colors.length]}"
+             stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }).join('');
+  const legend = brands.map((b, bi) =>
+    `<div class="legend-row"><div class="legend-dot" style="background:${colors[bi % colors.length]}"></div>
+     <div class="legend-label">${esc(b)}</div></div>`).join('');
+  const xlabels = weeks.map((w, i) =>
+    `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" fill="var(--dim)"
+      font-size="9">${w.slice(5).replace('-', '.')}</text>`).join('');
+  return `<div class="section">
+    <div class="section-head"><div class="section-title-lg">Görünürlük Trendi</div>
+      <div class="section-sub">haftalık ekran süresi — kampanya ne zaman başladı/kesildi</div></div>
+    <div class="trend-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+        <line x1="${PAD}" y1="${H - PAD}" x2="${W - PAD}" y2="${H - PAD}" stroke="var(--border)"/>
+        ${lines}${xlabels}
+      </svg>
+      <div class="donut-legend">${legend}</div>
+    </div></div>`;
+}
+
+// Kanal × marka ısı haritası — rakip karşılaştırması
+function renderMatrix(matrix) {
+  if (!matrix.length) return '';
+  const chans = [...new Set(matrix.flatMap(m => Object.keys(m.channels)))];
+  if (!chans.length) return '';
+  const max = Math.max(...matrix.flatMap(m => Object.values(m.channels))) || 1;
+  const head = chans.map(c =>
+    `<th title="${esc(c)}"><span>${esc(c.length > 12 ? c.slice(0, 11) + '…' : c)}</span></th>`).join('');
+  const rows = matrix.map(m => `<tr>
+      <td class="mx-brand" onclick="openBrand('${jsq(m.marka)}')">${esc(m.marka)}</td>
+      ${chans.map(c => {
+        const v = m.channels[c] || 0;
+        const a = v ? (0.12 + 0.75 * (v / max)) : 0;
+        return `<td class="mx-cell" style="background:rgba(37,99,235,${a.toFixed(2)})"
+                 title="${esc(m.marka)} · ${esc(c)} · ${_durTr(v)}">${v ? _durTr(v) : ''}</td>`;
+      }).join('')}</tr>`).join('');
+  return `<div class="section">
+    <div class="section-head"><div class="section-title-lg">Rakip Karşılaştırma Matrisi</div>
+      <div class="section-sub">hangi marka hangi kanalda ne kadar görünüyor (ekran süresi)</div></div>
+    <div class="mx-scroll"><table class="mx-table"><thead><tr><th></th>${head}</tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+}
+
 // ─── Metrik sözlüğü ───
 // "Reklam" kelimesi eskiden üç ayrı sayıyı etiketliyordu (kare / marka-görünümü
 // / tür-görünümü) ve sayılar birbirini tutmuyordu. Tek sözlük:

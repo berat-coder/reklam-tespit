@@ -28,7 +28,7 @@ from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
     set_channel_brand_flag, recompute_video_aggregates,
-    log_event, mark_live_status,
+    log_event, mark_live_status, _exposure_map,
 )
 from config import AUTO_SPONSOR_THRESHOLD
 
@@ -798,6 +798,7 @@ def _analyze_video_core(
         type_counts=agg["type_counts"],
         brand_counts=agg["brand_counts"],
         persistent_overlays=agg["persistent_overlays"],
+        brand_exposure=_exposure_map(agg),   # süre/olay → panel, trend, EMV
         desc_brands=desc_brands,
         completed=True,
     )
