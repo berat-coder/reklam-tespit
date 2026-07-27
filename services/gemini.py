@@ -288,12 +288,22 @@ def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
     if channel_logos:
         ctx += f"\n🚫 KANALIN KENDİ LOGOLARI (REKLAM SAYMA): {', '.join(channel_logos[:10])}"
     if main_sponsors:
-        ctx += (f"\n🏆 BAĞLAM: Bu kanalın RESMİ ANA SPONSORU: "
-                f"{', '.join(main_sponsors[:5])}. Bu markanın logosu yayın boyunca "
-                f"ekranda SÜREKLİ durur. Gördüğünde konumunu yaz ama türünü doğru "
-                f"ver: sabit köşe logosu ise tur='Köşe Banner'; SADECE kısa süreli "
-                f"spot reklamı (alt bant, tam ekran, ürün tanıtımı) ise o türü yaz. "
-                f"Kalıcı logoyu spot reklamla KARIŞTIRMA.")
+        # DİKKAT — burada sponsor ADI KASITLI OLARAK verilmiyor.
+        # Önceden "Bu kanalın RESMİ ANA SPONSORU: X" yazıyordu ve bu bir
+        # ONAY YANLILIĞI (confirmation bias) döngüsü yaratıyordu: düşük
+        # çözünürlükte bir kez yanlış okunan marka (Migros Hemen → n11)
+        # otomatik ana sponsor kaydediliyor, sonraki taramalarda prompt modele
+        # o adı söylüyor, model de köşedeki logoyu YÜKSEK GÜVENLE o marka ilan
+        # edip gerekçe uyduruyordu — hata kalıcılaşıyordu.
+        # Türü doğru sınıflandırmak için markanın adını bilmek GEREKMEZ;
+        # yalnız "kalıcı logo" davranışını tarif etmek yeterli.
+        ctx += ("\n🏆 BAĞLAM: Bu kanalda yayın boyunca ekranda SÜREKLİ duran "
+                "sabit bir sponsor logosu bulunuyor. Böyle bir logo görürsen "
+                "türünü doğru ver: sabit köşe logosu ise tur='Köşe Banner'; "
+                "kısa süreli spot reklam (alt bant, tam ekran, ürün tanıtımı) "
+                "ise o türü yaz. Kalıcı logoyu spot reklamla KARIŞTIRMA. "
+                "Markanın ADINI kendin OKU — sana marka adı verilmiyor, "
+                "tahmin etme, okuyamıyorsan boş bırak ve guven='Düşük' ver.")
     if known_brands:
         # Bu liste yalnız İPUCU. Priming riski var: model listedeki markayı
         # görmediği karede de yazabiliyordu → açık uyarı ekleniyor.

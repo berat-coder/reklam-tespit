@@ -16,7 +16,7 @@ import numpy as np
 
 from config import (
     load_config, FRAMES_DIR,
-    FRAME_INTERVAL, FRAME_WIDTH, BATCH_SIZE,
+    FRAME_INTERVAL, FRAME_WIDTH, SOURCE_MIN_HEIGHT, BATCH_SIZE,
     SCENE_DIFF_THRESHOLD, LOWER_BAND_THRESHOLD,
     TARGET_SAMPLE_FRAMES, MAX_API_FRAMES,
 )
@@ -207,7 +207,9 @@ def _extract_frames_opencv(stream_url, frames_dir, interval, width):
         if fw > width:
             frame = cv2.resize(frame, (width, int(fh * width / fw)))
         p = frames_dir / f"frame_{n + 1:04d}.jpg"
-        cv2.imwrite(str(p), frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        # 88: küçük marka yazıları JPEG artefaktında kaybolmasın (ffmpeg -q:v 4
+        # ile aynı kalite bandı). Yedek (opencv) yol da aynı okunurlukta olmalı.
+        cv2.imwrite(str(p), frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
         out.append((p, ts))
         n += 1
         current += frame_step
@@ -522,8 +524,15 @@ def _analyze_video_core(
     def _pick_stream_url(si):
         # Katı format seçici KULLANMIYORUZ (bazı videolarda hiç eşleşmeyip
         # "Requested format is not available" veriyor). Onun yerine mevcut
-        # formatlardan doğrudan URL'li, video codec'li olanı elle seçiyoruz;
-        # ≤480p tercih, yoksa en düşük çözünürlük. ffmpeg zaten 640px'e küçültür.
+        # formatlardan doğrudan URL'li, video codec'li olanı elle seçiyoruz.
+        #
+        # ÇÖZÜNÜRLÜK: eskiden ≤480p seçilip kare 640px'e küçültülüyordu. Köşe
+        # sponsor logosunun MARKA YAZISI bu boyutta okunmuyor ve model tahmin
+        # yürütüyordu (Migros Hemen → "n11" → "Misli"). 480p kaynağı 1280'e
+        # büyütmek de işe yaramaz; olmayan detay geri gelmez. Bu yüzden 720p
+        # (SOURCE_MIN_HEIGHT, varsayılan 1080p) tercih edilir; kare 1280'e
+        # KÜÇÜLTÜLÜR (upscale değil) → metin keskin kalır. Bant genişliği artar
+        # ama analiz normal internet bağlantısındaki işçide çalışıyor.
         if not si:
             return None, 0
         if si.get("url"):
@@ -537,10 +546,14 @@ def _analyze_video_core(
                 if rf.get("vcodec") not in (None, "none") and rf.get("url"):
                     return rf["url"], len(fmts)
             return None, len(fmts)
-        le480 = [f for f in cand if (f.get("height") or 99999) <= 480]
-        pool = le480 or cand
-        pool.sort(key=lambda f: (f.get("height") or 99999, f.get("tbr") or 0))
-        return pool[0]["url"], len(fmts)
+        target = SOURCE_MIN_HEIGHT                 # hedef kaynak yüksekliği
+        # Hedefe EN YAKIN ve hedeften küçük olmayan; yoksa mevcut en yükseği
+        ge = [f for f in cand if (f.get("height") or 0) >= target]
+        if ge:
+            ge.sort(key=lambda f: ((f.get("height") or 0), -(f.get("tbr") or 0)))
+            return ge[0]["url"], len(fmts)
+        cand.sort(key=lambda f: (-(f.get("height") or 0), -(f.get("tbr") or 0)))
+        return cand[0]["url"], len(fmts)
 
     class _YdlLog:
         """yt-dlp'nin uyarılarını yakalar. Asıl ret sebebi (bot kontrolü,

@@ -59,8 +59,21 @@ def _float_env(name, default):
 # ── Analiz performans/maliyet ayarları (env ile override edilebilir) ──
 # Frame örnekleme aralığı (saniye)
 FRAME_INTERVAL = _int_env("FRAME_INTERVAL", 8)
-# Gemini'ye gönderilen frame genişliği (px) — küçük = ucuz, büyük = daha okunur
-FRAME_WIDTH = _int_env("FRAME_WIDTH", 640)
+# Gemini'ye gönderilen frame genişliği (px).
+# 640 iken köşe logolarının MARKA YAZISI okunmuyordu: 640x360 karede logo alanı
+# 180x64 px kalıyor, marka adı ~8 px yüksekliğinde bir lekeye dönüşüyor ve model
+# tahmin yürütüyordu (ör. "Migros Hemen" → "n11"). 1280'de aynı yazı net okunur.
+# MALİYET: Gemini görüntüyü 768x768 karolara böler; hem 960 hem 1280 genişlik
+# 2 karo eder — yani 1280, 960 ile AYNI token'a çok daha okunur görüntü verir.
+# İstek SAYISI değişmez (RPD/RPM darboğazı etkilenmez), yalnız istek başına
+# token ~2 katına çıkar ki ücretsiz katmanda darboğaz token değil istek sayısıdır.
+FRAME_WIDTH = _int_env("FRAME_WIDTH", 1280)
+# İndirilecek KAYNAK akışın en düşük yüksekliği. Kritik: 480p kaynağı 1280'e
+# büyütmek işe yaramaz, olmayan detay geri gelmez — köşe logosunun marka yazısı
+# yine okunmaz. Ölçtük: aynı karede 480p ve 720p kaynakta "MiGROS" okunamayan
+# bir leke, 1080p kaynakta net (dosya yalnız %8 büyük). 1920→1280 küçültme,
+# 1280 native'den daha keskin metin verir.
+SOURCE_MIN_HEIGHT = _int_env("SOURCE_MIN_HEIGHT", 1080)
 # Tek Gemini çağrısında kaç frame analiz edilsin — büyük = daha az istek (RPD dostu)
 BATCH_SIZE = _int_env("BATCH_SIZE", 12)
 # Gemini dakika başı istek bütçesi. Ücretsiz katman RPM: 3.1-flash-lite=15,
