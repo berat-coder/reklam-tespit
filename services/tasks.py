@@ -27,10 +27,8 @@ from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from
 from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
-    set_channel_brand_flag, recompute_video_aggregates,
     log_event, mark_live_status, _exposure_map,
 )
-from config import AUTO_SPONSOR_THRESHOLD
 
 
 def _vid_from_url(url):
@@ -830,15 +828,16 @@ def _analyze_video_core(
     # ── Otomatik ANA SPONSOR: eşik üstü VEYA sürekli ekranda olan (köşe logosu /
     #    title sponsor, ör. A101) marka şişik veridir; ana sponsor + köşe-logosu-
     #    sayma işaretle → sayımdan düşür, sadece gerçek reklamlar (alt bant) kalsın ──
-    from services.aggregates import auto_sponsor_candidates
-    auto = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD, main_sponsors)
-    if auto:
-        for m in auto:
-            set_channel_brand_flag(channel_id, m, "main_sponsor", True)
-            set_channel_brand_flag(channel_id, m, "active_only", True)
-            set_channel_brand_flag(channel_id, m, "auto_main_sponsor", True)  # rozet
-        status(f"Otomatik ana sponsor: {', '.join(auto)}")
-        agg = recompute_video_aggregates(video_id) or agg  # bayraklarla yeniden hesapla
+    # NOT: Burada eskiden, bu videoda sürekli görünen marka KALICI KANAL KURALI
+    # olarak yazılıyordu (main_sponsor + active_only). İki yönden yanlıştı:
+    #  1) Bir kanalın her yayınında farklı sponsor olabilir — tek videodan
+    #     çıkarılan gözlem kanalın tamamına genellenemez.
+    #  2) Yanlış okunan bir marka (Migros Hemen → n11) kalıcı kural olunca
+    #     prompt'a "bu kanalın ana sponsoru n11" diye geri besleniyor ve model
+    #     sonraki taramalarda hatayı yüksek güvenle tekrarlıyordu.
+    # Kalıcı logo baskılaması artık compute_aggregates içinde VİDEO BAZINDA
+    # yapılıyor (auto_persistent) — kanal kuralı yazmaya gerek yok.
+    # Elle işaretlenen ana sponsorlar (kullanıcı kararı) aynen geçerli.
 
     # İşçi modu: kalan kare yüklemeleri bitsin (panelde eksik kare kalmasın)
     if frame_sync.enabled():

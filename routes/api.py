@@ -299,37 +299,36 @@ def maintenance_clean_frames():
 
 @api_bp.route("/api/maintenance/auto-sponsors", methods=["POST"])
 def maintenance_auto_sponsors():
-    """Mevcut tüm videolarda eşik üstü VEYA sürekli ekranda olan (köşe logosu)
-    markaları geriye dönük ana sponsor + 'köşe logosunu sayma' yapar → şişik
-    geçmiş veriyi (ör. 700 A101) düzeltir. Bir kez çalıştırmak yeterli."""
-    from config import AUTO_SPONSOR_THRESHOLD
-    from services.aggregates import auto_sponsor_candidates
-    from models.database import get_detections
+    """Şişik veriyi düzeltir: (a) sistemin OTOMATİK eklediği hatalı kanal
+    sponsor kurallarını temizler, (b) tüm videoları güncel kurallarla yeniden
+    hesaplar. Gemini kotası harcamaz.
+
+    Neden temizlik: eskiden tek bir videoda sürekli görünen marka KALICI KANAL
+    KURALI yazılıyordu. Bir kanalın her yayınında farklı sponsor olabildiği için
+    bu yanlıştı; üstelik yanlış okunan bir marka kural olunca prompt'a geri
+    beslenip hatayı kalıcılaştırıyordu. Kalıcı logo baskılaması artık video
+    bazında yapılıyor. ELLE işaretlenen sponsorlara DOKUNULMAZ."""
     videos = get_all_videos(completed_only=True)
-    flagged = {}
+    cleared = {}
+    seen_ch = set()
     for v in videos:
-        ch = get_channel(v["channel_id"]) or {}
-        agg = compute_aggregates(
-            get_detections(v["id"]), ch.get("channel_logos", []),
-            ch.get("main_sponsors", []), ch.get("sponsor_active_only", []),
-            brand_aliases=ch.get("brand_aliases", {}),
-            ignored_brands=ch.get("ignored_brands", []),
-            channel_name=ch.get("name", ""),
-            # Eksikti → bu çağrıda is_auto_main_sponsor hep False dönüyordu
-            auto_main_sponsors=ch.get("auto_main_sponsors", []))
-        cands = auto_sponsor_candidates(agg, AUTO_SPONSOR_THRESHOLD,
-                                        ch.get("main_sponsors", []))
-        for m in cands:
-            set_channel_brand_flag(v["channel_id"], m, "main_sponsor", True)
-            set_channel_brand_flag(v["channel_id"], m, "active_only", True)
-            set_channel_brand_flag(v["channel_id"], m, "auto_main_sponsor", True)
-            flagged.setdefault(v["channel_id"], [])
-            if m not in flagged[v["channel_id"]]:
-                flagged[v["channel_id"]].append(m)
+        cid = v["channel_id"]
+        if cid in seen_ch:
+            continue
+        seen_ch.add(cid)
+        ch = get_channel(cid) or {}
+        autos = list(ch.get("auto_main_sponsors") or [])
+        for m in autos:
+            # Yalnız OTOMATİK eklenmiş olanlar geri alınır
+            set_channel_brand_flag(cid, m, "main_sponsor", False)
+            set_channel_brand_flag(cid, m, "active_only", False)
+            set_channel_brand_flag(cid, m, "auto_main_sponsor", False)
+        if autos:
+            cleared[cid] = autos
     for v in videos:
         recompute_video_aggregates(v["id"])
-    return jsonify({"ok": True, "flagged": flagged,
-                    "threshold": AUTO_SPONSOR_THRESHOLD})
+    return jsonify({"ok": True, "cleared_auto_rules": cleared,
+                    "recomputed": len(videos)})
 
 
 # ── Otomatik gece taraması ──────────────────────────────────────────────────
