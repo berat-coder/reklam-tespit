@@ -143,8 +143,17 @@ def _detection_rules(channel_logos):
   her görünümü kanal kimliğidir, ASLA reklam veya marka olarak YAZMA
 - ⚽ OYUNCUNUN GİYDİĞİ formanın/şortun/çorabın üzerindeki SPONSOR markası
   (forma göğüs/kol sponsoru) — bu maç görüntüsünde sürekli ekranda olur, REKLAM
-  SAYMA. (Yazman gerekiyorsa SADECE tespit olarak tur="Forma" ver, "markalar"
-  dizisine EKLEME.)
+  SAYMA. Bu kural HER SPOR DALINDA geçerlidir: futbol, VOLEYBOL, basketbol,
+  hentbol… (ör. voleybolcunun formasındaki Vodafone = forma sponsoru, yayının
+  reklamı DEĞİL). (Yazman gerekiyorsa SADECE tespit olarak tur="Forma" ver,
+  "markalar" dizisine EKLEME.)
+- 💧 KONUŞMACININ İÇME SUYU / KİŞİSEL EŞYASI: basın toplantısı veya röportaj
+  masasında duran su şişesi, bardak, telefon, kişisel eşya — konuşmacının
+  kendi kullanımıdır, ÜRÜN YERLEŞTİRME SAYMA (ör. masadaki Saka su şişesi
+  reklam DEĞİLDİR). Yazman gerekiyorsa tur="Ürün Markası" ver, "markalar"
+  dizisine EKLEME. FARK: kanalın KENDİ stüdyosunda etiketi kameraya dönük,
+  belirgin şekilde konumlandırılmış markalı ürün (sunucunun tanıttığı/elinde
+  tuttuğu ürün) ise o GERÇEK ürün yerleştirmedir → tur="Ürün Yerleştirme".
 - 🎤 BASIN TOPLANTISI PANOSU / KULÜP MEDYA DUVARI: teknik direktör veya
   futbolcu açıklama yaparken ARKASINDAKİ panoda (backdrop) kulübün kendi
   sponsorları tekrar tekrar basılıdır. Bu KULÜBÜN panosudur, bu YAYININ reklamı

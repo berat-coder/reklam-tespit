@@ -120,6 +120,28 @@ TARGET_SAMPLE_FRAMES = _int_env("TARGET_SAMPLE_FRAMES", 200)
 # Ücretli katmanda büyük ver (ör. 400) → tam kapsama.
 MAX_API_FRAMES = _int_env("MAX_API_FRAMES", 60)
 
+# ── Kare çıkarma (seek) performans ayarları ──
+# Paralel ffmpeg seek işçisi sayısı. Hızlı (keyframe) modda seek'ler bağlantı
+# gecikmesiyle sınırlı olduğundan 10 güvenli; webshare proxy eşzamanlılık
+# limitine takılırsanız düşürün.
+FRAME_SEEK_WORKERS = _int_env("FRAME_SEEK_WORKERS", 10)
+# Kare başına ffmpeg süreç zaman aşımı (sn). Hızlı modda tek keyframe
+# indirildiği için 40 bol; eski değer 90 takılan seek'lerin slotu 1.5 dk
+# işgal etmesine yol açıyordu.
+FRAME_SEEK_TIMEOUT = _int_env("FRAME_SEEK_TIMEOUT", 40)
+# 1 = keyframe seek (-noaccurate_seek -skip_frame nokey): decode maliyeti ~sıfır,
+# indirme keyframe'de durur; kare zamanı istenen t'den en fazla ~5 sn (keyint)
+# erken olabilir — örnekleme aralığı ≥8 sn olduğundan kabul edilebilir.
+# 0 = eski hassas mod (kill-switch).
+FRAME_SEEK_FAST = _int_env("FRAME_SEEK_FAST", 1)
+# ffmpeg -rw_timeout (sn): ağ okuması bu kadar süre ilerlemezse süreç kendini
+# keser — takılan bağlantı işçi slotunu bekletmez.
+FRAME_SEEK_RW_TIMEOUT_SEC = _int_env("FRAME_SEEK_RW_TIMEOUT_SEC", 15)
+# Video başına (marka|tür) çifti en fazla bu kadar karede kanıt olarak saklanır.
+# Eskiden 3'tü; 2. model doğrulaması geldiği için 6'ya çıkarıldı — doğrulayıcının
+# inceleyebileceği daha çok kanıt kalır, gürültüyü zaten doğrulayıcı eler.
+BRAND_TUR_FRAME_CAP = _int_env("BRAND_TUR_FRAME_CAP", 6)
+
 # Spor yayınlarında REKLAM SAYILMAYACAK kulüp/lig/federasyon/milli takım adları.
 # Forma/saha SPONSOR markaları (bahis, banka, telekom) bundan etkilenmez — onlar
 # reklamdır. Bu liste yalnız kulüp KİMLİĞİ (arma/isim) için. UI'dan düzenlenebilir.
@@ -178,29 +200,38 @@ DEFAULT_CHANNELS = [
 
 _CONFIG_FILE = DATA_DIR / "config.json"
 
-# ── Otomatik gece taraması (envanter canlı yayınları) varsayılanları ──
-# Her `interval_min` dakikada BİR canlı yayın analiz edilir. 03:00–09:30 arası,
-# 15 dk ile ≈26 yayın/gece → Gemini günlük kotasını (3.1-flash-lite ~500 RPD)
-# zorlamaz. Hepsi UI Ayarlar'dan değiştirilebilir (config.json'a yazılır).
+# ── Otomatik tarama (7/24) varsayılanları ──
+# Zamanlayıcı SÜREKLİ çalışır: start–end arası "yoğun pencere"de her
+# `interval_min` dk, pencere dışında her `day_interval_min` dk bir tick atar.
+# Her tick'te (kuyruk boşsa) BİR canlı yayın analize gönderilir; `daily_cap`
+# günlük toplam üst sınırdır (Gemini free ~500 RPD ÷ ~6 çağrı/video ≈ 83 tavan,
+# 70 manuel işlere pay bırakır). Hepsi UI Ayarlar'dan değiştirilebilir.
 DEFAULT_AUTO_SCAN = {
     "enabled": True,
-    "start": os.environ.get("AUTO_SCAN_START", "03:00"),     # HH:MM (yerel saat)
-    "end": os.environ.get("AUTO_SCAN_END", "09:30"),         # HH:MM
-    "interval_min": _int_env("AUTO_SCAN_INTERVAL_MIN", 15),  # analiz temposu (dk)
+    "start": os.environ.get("AUTO_SCAN_START", "03:00"),     # HH:MM (yerel saat) — yoğun pencere başı
+    "end": os.environ.get("AUTO_SCAN_END", "09:30"),         # HH:MM — yoğun pencere sonu
+    "interval_min": _int_env("AUTO_SCAN_INTERVAL_MIN", 15),  # yoğun pencere temposu (dk)
+    "day_interval_min": _int_env("AUTO_SCAN_DAY_INTERVAL_MIN", 30),  # pencere dışı tempo (dk)
     "lookback_hours": _int_env("AUTO_SCAN_LOOKBACK_HOURS", 24),  # ilk keşif geriye-bakış
     "content_type": "live",                                  # sadece canlı yayın
-    "nightly_cap": _int_env("AUTO_SCAN_NIGHTLY_CAP", 30),    # gecelik güvenlik üst sınırı
+    "daily_cap": _int_env("AUTO_SCAN_DAILY_CAP", 70),        # günlük analiz üst sınırı
     "tz_offset": _int_env("AUTO_SCAN_TZ_OFFSET", 3),         # UTC ofseti (TR=+3) — saat hesabı buna göre
+    "live_recheck_min": _int_env("LIVE_RECHECK_MIN", 45),    # canlı yayın "bitti mi" kontrol aralığı (dk)
+    "live_wait_ttl_hours": _int_env("LIVE_WAIT_TTL_HOURS", 12),  # 7/24 yayın emniyeti: bu kadar saat sonra vazgeç
 }
 
 
 def _merge_auto_scan(saved):
-    """Kayıtlı auto_scan üzerine default'ları bindirir (eksik alanlar tamamlanır)."""
+    """Kayıtlı auto_scan üzerine default'ları bindirir (eksik alanlar tamamlanır).
+    Eski kurulumlardaki `nightly_cap` → `daily_cap` migrasyonu burada yapılır."""
     merged = dict(DEFAULT_AUTO_SCAN)
     if isinstance(saved, dict):
         for k in merged:
             if k in saved and saved[k] is not None:
                 merged[k] = saved[k]
+        if "daily_cap" not in saved and saved.get("nightly_cap") is not None:
+            # Gecelik 30'luk tavan 7/24 çalışmada çok düşük kalır — en az default'a çek
+            merged["daily_cap"] = max(int(saved["nightly_cap"]), DEFAULT_AUTO_SCAN["daily_cap"])
     return merged
 
 
@@ -208,6 +239,10 @@ def load_config():
     # Önce env var'ı taban olarak al
     cfg = {
         "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
+        # 2. model doğrulama sağlayıcı anahtarları (config.json env'i ezer)
+        "openrouter_api_key": os.environ.get("OPENROUTER_API_KEY", ""),
+        "groq_api_key": os.environ.get("GROQ_API_KEY", ""),
+        "mistral_api_key": os.environ.get("MISTRAL_API_KEY", ""),
         "channels": list(DEFAULT_CHANNELS),
         "auto_scan": dict(DEFAULT_AUTO_SCAN),
         "global_ignored_brands": list(DEFAULT_SPORTS_IGNORE),
@@ -222,6 +257,9 @@ def load_config():
             saved = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
             if saved.get("gemini_api_key"):
                 cfg["gemini_api_key"] = saved["gemini_api_key"]
+            for k in ("openrouter_api_key", "groq_api_key", "mistral_api_key"):
+                if saved.get(k):
+                    cfg[k] = saved[k]
             if saved.get("channels"):
                 cfg["channels"] = saved["channels"]
             cfg["auto_scan"] = _merge_auto_scan(saved.get("auto_scan"))

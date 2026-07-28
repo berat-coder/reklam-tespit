@@ -119,6 +119,18 @@ _MIGRATIONS = [
     ("videos", "brand_exposure", "TEXT NOT NULL DEFAULT '{}'"),
     # Kanal başına saniye başına medya değeri (TL). 0 → global varsayılan.
     ("channels", "emv_rate", "TEXT NOT NULL DEFAULT ''"),
+    # Canlı-bekle akışı: yayın SÜRERKEN analiz etmek yerine bitmesini bekle.
+    # wait_since: live_wait durumuna geçiş anı (TTL için), last_check/check_count:
+    # "bitti mi" kontrol takibi.
+    ("live_seen", "wait_since", "TEXT"),
+    ("live_seen", "last_check", "TEXT"),
+    ("live_seen", "check_count", "INTEGER NOT NULL DEFAULT 0"),
+    # Canlı yayın sürerken yapılan ~10 dk'lık kısmi önizleme analizi işareti.
+    # is_partial=1 videolar istatistiklere girmez ve tam analiz üstüne yazar.
+    ("videos", "is_partial", "INTEGER NOT NULL DEFAULT 0"),
+    # 2. model doğrulaması (yanlış pozitif avcısı): ''|confirmed|rejected|uncertain|error
+    ("detections", "verify_status", "TEXT NOT NULL DEFAULT ''"),
+    ("detections", "verify_notes", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -241,14 +253,23 @@ def live_seen_ids():
 
 
 def list_live_seen(since=None, limit=50):
-    """Son görülen canlı yayınlar (panel için). since: ISO tarih filtresi."""
+    """Son görülen canlı yayınlar (panel için). since: ISO tarih filtresi.
+    channel_name ve has_video (analiz gerçekten tamamlandı mı) join ile gelir —
+    'analiz edildi' linki yalnızca has_video=1 iken gösterilmeli (404 önlemi)."""
     with get_db() as conn:
-        q = "SELECT * FROM live_seen"
+        q = """
+            SELECT ls.*, c.name AS channel_name,
+                   CASE WHEN v.id IS NOT NULL THEN 1 ELSE 0 END AS has_video,
+                   v.ad_frame_count AS ad_frame_count
+            FROM live_seen ls
+            LEFT JOIN channels c ON c.id = ls.channel_id
+            LEFT JOIN videos v ON v.id = ls.video_id AND v.completed = 1
+        """
         params = []
         if since:
-            q += " WHERE seen_at >= ?"
+            q += " WHERE ls.seen_at >= ?"
             params.append(since)
-        q += " ORDER BY seen_at DESC LIMIT ?"
+        q += " ORDER BY ls.seen_at DESC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in conn.execute(q, params).fetchall()]
 
@@ -260,7 +281,8 @@ def _retry_cutoff(minutes=30):
 def next_pending_live(max_attempts=3):
     """Analize gönderilecek sıradaki canlı yayın:
     status='pending' VEYA (status='failed' & attempts<max & son deneme 30dk+ önce).
-    En son keşfedilen önce (seen_at DESC)."""
+    FIFO (seen_at ASC) — en yeni önce olsaydı eski bekleyenler sıra alamadan
+    budama TTL'ine takılıp sessizce siliniyordu."""
     cut = _retry_cutoff(30)
     with get_db() as conn:
         row = conn.execute("""
@@ -268,9 +290,23 @@ def next_pending_live(max_attempts=3):
             WHERE status = 'pending'
                OR (status = 'failed' AND attempts < ?
                    AND (last_attempt IS NULL OR last_attempt < ?))
-            ORDER BY seen_at DESC LIMIT 1
+            ORDER BY seen_at ASC LIMIT 1
         """, (max_attempts, cut)).fetchone()
         return dict(row) if row else None
+
+
+def requeue_stale_queued(minutes=90):
+    """Worker ölürse 'queued' satırlar sonsuza dek takılı kalıyordu — hiçbir kod
+    yolu onları tekrar 'pending' yapmıyordu. Son denemesi `minutes` dk'dan eski
+    queued satırları yeniden kuyruğa alınabilir yap."""
+    cut = _retry_cutoff(minutes)
+    with get_db() as conn:
+        cur = conn.execute("""
+            UPDATE live_seen SET status = 'pending'
+            WHERE status = 'queued'
+              AND (last_attempt IS NULL OR last_attempt < ?)
+        """, (cut,))
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 def count_pending_live(max_attempts=3):
@@ -298,11 +334,69 @@ def list_failed_live(limit=30):
         return [dict(r) for r in rows]
 
 
-def prune_live_seen(hours=36):
-    """Eski live_seen kayıtlarını buda (ertesi gece yeniden denenebilsin)."""
-    cut = (datetime.utcnow() - __import__("datetime").timedelta(hours=hours)).isoformat()
+def set_live_wait(video_id):
+    """Satırı 'canlı — bitmesi bekleniyor' durumuna al. wait_since yalnızca ilk
+    geçişte damgalanır (TTL sayacı sıfırlanmasın). 'done' satırlara dokunmaz."""
+    if not video_id:
+        return
+    now = datetime.utcnow().isoformat()
     with get_db() as conn:
-        conn.execute("DELETE FROM live_seen WHERE seen_at IS NOT NULL AND seen_at < ?", (cut,))
+        conn.execute("""
+            UPDATE live_seen
+            SET status = 'live_wait',
+                wait_since = COALESCE(wait_since, ?)
+            WHERE video_id = ? AND status != 'done'
+        """, (now, video_id))
+
+
+def list_live_waits(recheck_min=45, limit=5):
+    """'Bitti mi' kontrolü zamanı gelmiş canlı-bekle satırları (en eski bekleyen önce)."""
+    cut = _retry_cutoff(recheck_min)
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM live_seen
+            WHERE status = 'live_wait'
+              AND (last_check IS NULL OR last_check < ?)
+            ORDER BY wait_since ASC LIMIT ?
+        """, (cut, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_live_check(video_id):
+    """Bir canlı-bekle satırının kontrol damgasını/sayacını güncelle."""
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE live_seen SET last_check = ?, check_count = check_count + 1
+            WHERE video_id = ?
+        """, (datetime.utcnow().isoformat(), video_id))
+
+
+def count_waiting_live():
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM live_seen WHERE status = 'live_wait'").fetchone()
+        return int(row["n"]) if row else 0
+
+
+def prune_live_seen(hours=36):
+    """Eski live_seen kayıtlarını DURUM-DUYARLI buda. Eski hali her şeyi 36 saatte
+    siliyordu — analiz sırası gelmemiş 'pending' kayıtlar sessizce kayboluyordu.
+    done → `hours` (36s; yeniden keşif is_video_completed ile zaten atlanır)
+    failed/permanent → 7 gün (Durum panelinde görünür kalsın)
+    pending/queued/live_wait → 72s (yalnızca emniyet supabı)"""
+    _td = __import__("datetime").timedelta
+    now = datetime.utcnow()
+    cut_done = (now - _td(hours=hours)).isoformat()
+    cut_err = (now - _td(days=7)).isoformat()
+    cut_wait = (now - _td(hours=72)).isoformat()
+    with get_db() as conn:
+        conn.execute("""
+            DELETE FROM live_seen WHERE seen_at IS NOT NULL AND (
+                   (status = 'done' AND seen_at < ?)
+                OR (status IN ('failed', 'permanent') AND seen_at < ?)
+                OR (status NOT IN ('done', 'failed', 'permanent') AND seen_at < ?)
+            )
+        """, (cut_done, cut_err, cut_wait))
 
 
 # ── Basit anahtar/değer durum deposu (scheduler runtime state) ─────────────────
@@ -799,26 +893,28 @@ def delete_video(video_id):
 
 
 def is_video_completed(video_id):
+    """TAM analiz bitti mi? Canlı önizleme (is_partial=1) tamamlanmış SAYILMAZ —
+    yayın bitince tam analiz üstüne yazabilsin."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT completed FROM videos WHERE id = ?", (video_id,)
+            "SELECT completed, is_partial FROM videos WHERE id = ?", (video_id,)
         ).fetchone()
-        return bool(row and row["completed"])
+        return bool(row and row["completed"] and not row["is_partial"])
 
 
 def upsert_video(video_id, channel_id, title="", url="", duration=0,
                  thumbnail="", analyzed_at=None, total_frames=0, api_calls=0,
                  ad_frame_count=0, type_counts=None, brand_counts=None,
                  desc_brands=None, persistent_overlays=None, completed=False,
-                 brand_exposure=None):
+                 brand_exposure=None, is_partial=False):
     with get_db() as conn:
         conn.execute("""
             INSERT INTO videos (
                 id, channel_id, title, url, duration, thumbnail, analyzed_at,
                 total_frames, api_calls, ad_frame_count,
                 type_counts, brand_counts, desc_brands, persistent_overlays, completed,
-                brand_exposure
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                brand_exposure, is_partial
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title         = COALESCE(NULLIF(excluded.title, ''),     videos.title),
                 url           = COALESCE(NULLIF(excluded.url, ''),       videos.url),
@@ -833,7 +929,8 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
                 desc_brands   = COALESCE(excluded.desc_brands,           videos.desc_brands),
                 persistent_overlays = excluded.persistent_overlays,
                 brand_exposure = excluded.brand_exposure,
-                completed     = excluded.completed
+                completed     = excluded.completed,
+                is_partial    = excluded.is_partial
         """, (
             video_id, channel_id, title, url, duration, thumbnail,
             analyzed_at, total_frames, api_calls, ad_frame_count,
@@ -843,6 +940,7 @@ def upsert_video(video_id, channel_id, title="", url="", duration=0,
             json.dumps(persistent_overlays or [], ensure_ascii=False),
             int(completed),
             json.dumps(brand_exposure or {}, ensure_ascii=False),
+            int(is_partial),
         ))
 
 
@@ -890,6 +988,23 @@ def get_detection(video_id, index):
             (video_id, index),
         ).fetchone()
         return _det(row) if row else None
+
+
+def update_detection_verify(video_id, idx, status, notes="", guven=None):
+    """2. model doğrulama sonucunu yaz. İnsan düzeltmesi (manual_clean) her zaman
+    üstündür — o satırlara DOKUNMAZ. guven verilirse birlikte güncellenir
+    (rejected → 'Düşük': MIN_CONFIDENCE filtresi sayımdan düşürür, kanıt kalır)."""
+    with get_db() as conn:
+        if guven:
+            conn.execute("""
+                UPDATE detections SET verify_status = ?, verify_notes = ?, guven = ?
+                WHERE video_id = ? AND idx = ? AND COALESCE(manual_clean, 0) = 0
+            """, (status, notes, guven, video_id, idx))
+        else:
+            conn.execute("""
+                UPDATE detections SET verify_status = ?, verify_notes = ?
+                WHERE video_id = ? AND idx = ? AND COALESCE(manual_clean, 0) = 0
+            """, (status, notes, video_id, idx))
 
 
 def _rebuild_markalar(tespitler):
@@ -1044,7 +1159,9 @@ def get_all_videos(completed_only=True):
             LEFT JOIN channels c ON c.id = v.channel_id
         """
         if completed_only:
-            q += " WHERE v.completed = 1"
+            # Canlı önizlemeler (is_partial) istatistiklere girmez — 10 dk'lık
+            # örnek tam yayının verisi gibi görünüp panelleri çarpıtıyordu.
+            q += " WHERE v.completed = 1 AND COALESCE(v.is_partial, 0) = 0"
         q += " ORDER BY v.analyzed_at DESC"
         rows = conn.execute(q).fetchall()
         out = []
@@ -1355,14 +1472,28 @@ def _brand_summary(videos):
     }
 
 
+_TR_UTC_OFFSET = 3  # Türkiye sabit UTC+3 (2016'dan beri DST yok)
+
+
+def _tr_date(iso):
+    """Naive-UTC ISO string → İstanbul tarihi 'YYYY-MM-DD' (gün kovalama için)."""
+    try:
+        return (datetime.fromisoformat(iso)
+                + __import__("datetime").timedelta(hours=_TR_UTC_OFFSET)).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return ""
+
+
 def get_daily_report(day=None):
-    """Ana sayfa günlük raporu: bugünün ve son 7 günün öne çıkan markaları + aktivite."""
-    today = day or datetime.utcnow().strftime("%Y-%m-%d")
-    week_cut = (datetime.utcnow() - __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
+    """Ana sayfa günlük raporu: bugünün ve son 7 günün öne çıkan markaları + aktivite.
+    'Bugün' İstanbul gününe göredir — UTC kullanmak 00:00-03:00 TR arasında yanlış gün verir."""
+    now_tr = datetime.utcnow() + __import__("datetime").timedelta(hours=_TR_UTC_OFFSET)
+    today = day or now_tr.strftime("%Y-%m-%d")
+    week_cut = (now_tr - __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
     videos = get_all_videos(completed_only=True)
-    today_v = [v for v in videos if (v.get("analyzed_at") or "")[:10] == today]
-    week_v = [v for v in videos if (v.get("analyzed_at") or "")[:10] >= week_cut]
-    last_day = max(((v.get("analyzed_at") or "")[:10] for v in videos), default="")
+    today_v = [v for v in videos if _tr_date(v.get("analyzed_at")) == today]
+    week_v = [v for v in videos if _tr_date(v.get("analyzed_at")) >= week_cut]
+    last_day = max((_tr_date(v.get("analyzed_at")) for v in videos), default="")
     return {
         "date": today,
         "today": _brand_summary(today_v),
@@ -1397,7 +1528,7 @@ def get_brand_appearances(marka):
             "thumbnail": v["thumbnail"], "analyzed_at": v["analyzed_at"],
             "count": cnt,
         })
-        day = (v.get("analyzed_at") or "")[:10]
+        day = _tr_date(v.get("analyzed_at"))
         if day:
             timeline[day] = timeline.get(day, 0) + cnt
 
@@ -1449,6 +1580,7 @@ def _vid(row):
         "persistent_overlays": json.loads(_col(row, "persistent_overlays") or "[]"),
         "brand_exposure": json.loads(_col(row, "brand_exposure") or "{}"),
         "completed": bool(row["completed"]),
+        "is_partial": bool(_col(row, "is_partial", 0)),
     }
 
 
@@ -1474,4 +1606,6 @@ def _det(row):
         "ozet": row["ozet"],
         "_api_used": bool(row["api_used"]),
         "manual_clean": bool(_col(row, "manual_clean", 0)),
+        "verify_status": _col(row, "verify_status", "") or "",
+        "verify_notes": _col(row, "verify_notes", "") or "",
     }

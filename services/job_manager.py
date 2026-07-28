@@ -35,6 +35,7 @@ class _RedisLiveState:
         self._r = r
 
     def set(self, **kwargs):
+        _stamp_finished(kwargs)
         current = self._load() or {}
         current.update(kwargs)
         self._r.setex(self.KEY, self.TTL, json.dumps(current, ensure_ascii=False))
@@ -63,6 +64,43 @@ def _get_redis_live():
     if _redis_live is None:
         _redis_live = _RedisLiveState(_redis)
     return _redis_live
+
+
+def _stamp_finished(kwargs):
+    """Analiz bitti/hata verdi anını kaydet — /api/live-video hoşgörü penceresi bunu okur."""
+    if kwargs.get("status") in ("completed", "error") and "finished_at" not in kwargs:
+        kwargs["finished_at"] = datetime.utcnow().isoformat()
+
+
+def _job_label(kind, title=None, channel_name=None, url=""):
+    """Kuyruk/sidebar için insan-okur etiket (Redis ve thread modunda ortak)."""
+    if kind == "channel_scan":
+        return "📡 Kanal taraması: " + ((url or "").split("@")[-1] or "?")
+    if kind == "verify":
+        return "🔍 " + (title or "2. model doğrulaması")
+    t = (title or "").strip()
+    if not t:
+        u = url or ""
+        t = u.split("v=")[-1].split("&")[0] if "v=" in u else u.rsplit("/", 1)[-1]
+    ch = (channel_name or "").strip()
+    return "🎬 " + (f"{ch} · {t}" if ch else t)
+
+
+def _merge_live_state(running_item, live, kind, channel_name, url):
+    """Canlı analiz state'ini (adım/ilerleme/başlık) running_item'a işle."""
+    message = ""
+    if live and live.get("status") not in (None, "completed", "error"):
+        running_item.update({
+            "video_id": live.get("video_id") or "",
+            "step": live.get("status") or "",
+            "progress": live.get("progress") or 0,
+        })
+        if live.get("title"):
+            running_item["title"] = live["title"]
+            running_item["label"] = _job_label(
+                kind, live["title"], channel_name or live.get("channel_name"), url)
+        message = live.get("message") or ""
+    return running_item, message
 
 
 # ── JobManager ────────────────────────────────────────────────────────────────
@@ -95,6 +133,7 @@ class JobManager:
         if USE_REDIS:
             _get_redis_live().set(**kwargs)
         else:
+            _stamp_finished(kwargs)
             with self._live_lock:
                 if self._live_video is None:
                     self._live_video = {}
@@ -118,14 +157,18 @@ class JobManager:
 
     # ── Kuyruk yönetimi ───────────────────────────────────────────────────────
 
-    def add_video(self, video_url, channel_id=None, channel_name=None, priority=False):
+    def add_video(self, video_url, channel_id=None, channel_name=None, priority=False, title=""):
         if priority:
             _clear_pause()   # manuel analiz → molayı kaldır
         if USE_REDIS:
             from services.tasks import process_video_rq
+            # Worker imzası değişmez; başlık/kanal bilgisi meta ile taşınır (sidebar için)
             job = _rq.enqueue(
                 process_video_rq, video_url, channel_id, channel_name,
                 job_timeout=3600, at_front=priority,
+                description=(title or video_url)[:120],
+                meta={"kind": "video", "title": title or "",
+                      "channel_name": channel_name or "", "url": video_url},
             )
             return job.id
         with self._lock:
@@ -134,6 +177,7 @@ class JobManager:
                 "url": video_url,
                 "channel_id": channel_id,
                 "channel_name": channel_name,
+                "title": title or "",
                 "id": str(uuid.uuid4())[:8],
                 "queued_at": datetime.utcnow().isoformat(),
             }
@@ -151,6 +195,8 @@ class JobManager:
             job = _rq.enqueue(
                 process_channel_scan_rq, channel_url, last_hours, content_type,
                 job_timeout=7200,
+                description=("Kanal taraması: " + channel_url)[:120],
+                meta={"kind": "channel_scan", "url": channel_url},
             )
             return job.id
         with self._lock:
@@ -161,6 +207,24 @@ class JobManager:
                 "content_type": content_type,
                 "id": str(uuid.uuid4())[:8],
             }
+            self._queue.append(job)
+        self._ensure_worker()
+        return job["id"]
+
+    def add_verify(self, video_id):
+        """2. model doğrulama işi (analiz sonrası, düşük öncelik)."""
+        if USE_REDIS:
+            from services.tasks import process_verify_rq
+            job = _rq.enqueue(
+                process_verify_rq, video_id,
+                job_timeout=1800,
+                description=f"Doğrulama: {video_id}",
+                meta={"kind": "verify", "url": "", "title": f"Doğrulama: {video_id}"},
+            )
+            return job.id
+        with self._lock:
+            job = {"type": "verify", "video_id": video_id,
+                   "id": str(uuid.uuid4())[:8]}
             self._queue.append(job)
         self._ensure_worker()
         return job["id"]
@@ -189,36 +253,122 @@ class JobManager:
 
     def queue_status(self):
         if USE_REDIS:
+            return self._queue_status_redis()
+        return self._queue_status_thread()
+
+    def _queue_status_redis(self):
+        from rq.job import Job
+        from rq.registry import StartedJobRegistry
+        try:
+            started_ids = StartedJobRegistry(queue=_rq).get_job_ids()
+            queued_ids = _rq.job_ids
+        except Exception:
+            started_ids, queued_ids = [], []
+
+        # Ölü worker'ın job'u registry'de job_timeout (1-2 saat) boyunca kalabiliyor;
+        # heartbeat'i ~2 dk'dan eski job'ları çalışıyor sayma.
+        running_job = None
+        for jid in started_ids:
             try:
-                from rq.registry import StartedJobRegistry
-                started = StartedJobRegistry(queue=_rq).get_job_ids()
-                queued = _rq.job_ids
+                j = Job.fetch(jid, connection=_redis)
             except Exception:
-                started, queued = [], []
-            return {
-                "queue_length": len(queued),
-                "current": started[0] if started else None,
-                "running": bool(started),
-                "status": "running" if started else ("queued" if queued else "idle"),
-                "message": "",
+                continue
+            hb = getattr(j, "last_heartbeat", None)
+            if hb is not None:
+                try:
+                    if (datetime.utcnow() - hb).total_seconds() > 120:
+                        continue
+                except TypeError:
+                    pass
+            running_job = j
+            break
+
+        running_item, message = None, ""
+        if running_job is not None:
+            meta = running_job.meta or {}
+            kind = meta.get("kind") or (
+                "channel_scan" if "channel_scan" in (running_job.func_name or "") else "video")
+            url = meta.get("url") or (running_job.args[0] if running_job.args else "")
+            title, channel_name = meta.get("title") or "", meta.get("channel_name") or ""
+            running_item = {
+                "label": _job_label(kind, title, channel_name, url),
+                "title": title, "channel_name": channel_name,
+                "url": url, "type": kind,
             }
+            # Tek worker → reklam:live anahtarı çalışan işin anlık durumudur
+            live = _get_redis_live().get() or {}
+            running_item, message = _merge_live_state(running_item, live, kind, channel_name, url)
+
+        queued_items = []
+        if queued_ids:
+            try:
+                jobs = Job.fetch_many(queued_ids[:6], connection=_redis)
+            except Exception:
+                jobs = []
+            for j in jobs:
+                if j is None:
+                    continue
+                meta = j.meta or {}
+                kind = meta.get("kind") or (
+                    "channel_scan" if "channel_scan" in (j.func_name or "") else "video")
+                url = meta.get("url") or (j.args[0] if j.args else "")
+                queued_items.append({
+                    "label": _job_label(kind, meta.get("title"), meta.get("channel_name"), url),
+                    "type": kind,
+                    "position": len(queued_items) + 1,
+                })
+
+        running = running_job is not None
+        return {
+            "queue_length": len(queued_ids),
+            "current": started_ids[0] if started_ids else None,
+            "running": running,
+            "status": "running" if running else ("queued" if queued_ids else "idle"),
+            "message": message,
+            "running_item": running_item,
+            "queued_items": queued_items,
+        }
+
+    def _queue_status_thread(self):
         with self._lock:
-            # Sırada bekleyenlerin kısa önizlemesi (UI kenar çubuğu için)
-            def _label(j):
-                if j.get("type") == "channel_scan":
-                    return "📡 Kanal taraması: " + (j.get("url", "").split("@")[-1] or "?")
-                u = j.get("url", "")
-                vid = u.split("v=")[-1].split("&")[0] if "v=" in u else u.rsplit("/", 1)[-1]
-                ch = j.get("channel_name") or ""
-                return "🎬 " + (f"{ch} · {vid}" if ch else vid)
-            return {
-                "queue_length": len(self._queue),
-                "current": self._current,
-                "running": self._running,
-                "status": self._status,
-                "message": self._message,
-                "queued_items": [_label(j) for j in self._queue[:5]],
+            current = dict(self._current) if self._current else None
+            queue_snapshot = [dict(j) for j in self._queue[:6]]
+            queue_length = len(self._queue)
+            running = self._running and current is not None
+            status = self._status
+            message = self._message
+
+        running_item = None
+        if running and current:
+            kind = current.get("type", "video")
+            url = current.get("url", "")
+            title, channel_name = current.get("title") or "", current.get("channel_name") or ""
+            running_item = {
+                "label": _job_label(kind, title, channel_name, url),
+                "title": title, "channel_name": channel_name,
+                "url": url, "type": kind,
             }
+            live = self.get_live_video() or {}
+            running_item, live_msg = _merge_live_state(running_item, live, kind, channel_name, url)
+            if live_msg:
+                message = live_msg
+
+        queued_items = [{
+            "label": _job_label(j.get("type", "video"), j.get("title"),
+                                j.get("channel_name"), j.get("url", "")),
+            "type": j.get("type", "video"),
+            "position": i + 1,
+        } for i, j in enumerate(queue_snapshot)]
+
+        return {
+            "queue_length": queue_length,
+            "current": current.get("id") if current else None,
+            "running": running,
+            "status": status,
+            "message": message,
+            "running_item": running_item,
+            "queued_items": queued_items,
+        }
 
     # ── Thread worker (Redis yoksa) ───────────────────────────────────────────
 
@@ -254,6 +404,9 @@ class JobManager:
                 elif job["type"] == "channel_scan":
                     from services.tasks import process_channel_scan_sync
                     process_channel_scan_sync(job, api_key, self)
+                elif job["type"] == "verify":
+                    from services.tasks import process_verify_sync
+                    process_verify_sync(job, api_key, self)
             except Exception as e:
                 self._status = "error"
                 self._message = f"Hata: {e}"

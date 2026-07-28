@@ -877,21 +877,37 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
       Anahtar almak için: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>
     </div>
 
+    <div style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
+      <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
+        <i class="ti ti-shield-check" style="color:var(--accent)"></i> 2. Model Doğrulaması
+      </div>
+      <div class="setup-desc">Reklam bulunan kareler ikinci (ücretsiz) bir görsel AI modeliyle tekrar denetlenir — forma sponsoru, masadaki su şişesi gibi tesadüfi marka görünümleri elenir. Bir anahtar girmeniz yeterli (öncelik sırası: OpenRouter → Groq → Mistral). Boş bırakılırsa doğrulama devre dışıdır.</div>
+      <div class="add-field"><label>OpenRouter API anahtarı <span id="vkOpenrouter" style="color:var(--green)"></span> — <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--blue)">ücretsiz al</a></label>
+        <input type="password" id="verifyKeyOpenrouter" placeholder="sk-or-..."></div>
+      <div class="add-field"><label>Groq API anahtarı <span id="vkGroq" style="color:var(--green)"></span> (opsiyonel yedek)</label>
+        <input type="password" id="verifyKeyGroq" placeholder="gsk_..."></div>
+      <div class="add-field"><label>Mistral API anahtarı <span id="vkMistral" style="color:var(--green)"></span> (opsiyonel yedek)</label>
+        <input type="password" id="verifyKeyMistral" placeholder="..."></div>
+      <button class="btn full" onclick="saveVerifyKeys()" style="margin-top:6px"><i class="ti ti-device-floppy"></i> Doğrulama Anahtarlarını Kaydet</button>
+    </div>
+
     <div id="autoscanSettings" style="border-top:1px solid var(--border);margin-top:22px;padding-top:18px">
       <div class="setup-title" style="font-size:15px;display:flex;align-items:center;gap:8px">
-        <i class="ti ti-radar-2" style="color:var(--accent)"></i> Otomatik Gece Taraması
+        <i class="ti ti-radar-2" style="color:var(--accent)"></i> Otomatik Tarama (7/24)
       </div>
-      <div class="setup-desc">Envanterdeki kanalların canlı yayınları bu saatlerde, belirlenen aralıkla otomatik analiz edilir. Değişiklikler anında geçerli olur (yeniden başlatma gerekmez).</div>
+      <div class="setup-desc">Tarama sürekli çalışır: gece penceresi "yoğun mod" temposunu belirler, gündüz daha seyrek devam eder. Süren canlı yayınlar bitince analiz edilir. Değişiklikler anında geçerli olur (yeniden başlatma gerekmez).</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;cursor:pointer">
         <input type="checkbox" id="asEnabled" style="width:16px;height:16px;accent-color:var(--accent)">
         Otomatik tarama açık
       </label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="add-field"><label>Başlangıç saati</label><input id="asStart" type="time"></div>
-        <div class="add-field"><label>Bitiş saati</label><input id="asEnd" type="time"></div>
-        <div class="add-field"><label>Aralık (dk) — kaç dk'da bir yayın</label><input id="asInterval" type="number" min="1" max="180"></div>
+        <div class="add-field"><label>Yoğun pencere başı</label><input id="asStart" type="time"></div>
+        <div class="add-field"><label>Yoğun pencere sonu</label><input id="asEnd" type="time"></div>
+        <div class="add-field"><label>Yoğun mod aralığı (dk)</label><input id="asInterval" type="number" min="1" max="180"></div>
+        <div class="add-field"><label>Gündüz aralığı (dk)</label><input id="asDayInterval" type="number" min="1" max="360"></div>
         <div class="add-field"><label>İlk keşif geriye-bakış (saat)</label><input id="asLookback" type="number" min="1" max="168"></div>
-        <div class="add-field"><label>Gecelik üst sınır (max video)</label><input id="asCap" type="number" min="1" max="500"></div>
+        <div class="add-field"><label>Günlük üst sınır (max video)</label><input id="asCap" type="number" min="1" max="500"></div>
+        <div class="add-field"><label>Canlı "bitti mi" kontrolü (dk)</label><input id="asRecheck" type="number" min="5" max="240"></div>
         <div class="add-field"><label>Saat dilimi ofseti (TR=3)</label><input id="asTz" type="number" min="-12" max="14"></div>
       </div>
       <button class="btn primary full" onclick="saveAutoScanSettings()" style="margin-top:10px"><i class="ti ti-device-floppy"></i> Tarama Ayarlarını Kaydet</button>
@@ -980,6 +996,12 @@ h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
         <div class="queue-status-line">
           <span id="queueState" style="color:var(--green)">Boş</span>
           <span id="queueLen" style="color:var(--dim)">0</span>
+        </div>
+        <div id="queueRunning" style="display:none;cursor:pointer;margin-top:4px" onclick="goLive(null)" title="Canlı analizi aç">
+          <div id="queueRunningLabel" style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+          <div style="height:3px;background:var(--bg3);border-radius:2px;margin-top:3px;overflow:hidden">
+            <div id="queueRunningBar" style="height:100%;width:0%;background:var(--amber);border-radius:2px;transition:width .5s"></div>
+          </div>
         </div>
         <div class="queue-msg" id="queueMsg">Hazır</div>
         <div id="queueItems" style="margin-top:4px"></div>
@@ -1161,6 +1183,7 @@ function openSetup(section) {
   loadIgnoreList();
   loadPlacements();
   loadFrameRetention();
+  loadVerifyKeyPreviews();
   if (section === 'autoscan') {
     setTimeout(() => { const el = $('autoscanSettings'); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
   } else {
@@ -1279,8 +1302,10 @@ async function loadAutoScanSettings() {
     if ($('asStart')) $('asStart').value = a.start || '03:00';
     if ($('asEnd')) $('asEnd').value = a.end || '09:30';
     if ($('asInterval')) $('asInterval').value = a.interval_min ?? 15;
+    if ($('asDayInterval')) $('asDayInterval').value = a.day_interval_min ?? 30;
     if ($('asLookback')) $('asLookback').value = a.lookback_hours ?? 24;
-    if ($('asCap')) $('asCap').value = a.nightly_cap ?? 30;
+    if ($('asCap')) $('asCap').value = a.daily_cap ?? a.nightly_cap ?? 70;
+    if ($('asRecheck')) $('asRecheck').value = a.live_recheck_min ?? 45;
     if ($('asTz')) $('asTz').value = a.tz_offset ?? 3;
   } catch (e) {}
 }
@@ -1303,8 +1328,10 @@ async function saveAutoScanSettings() {
     start: $('asStart').value || '03:00',
     end: $('asEnd').value || '09:30',
     interval_min: parseInt($('asInterval').value) || 15,
+    day_interval_min: parseInt($('asDayInterval').value) || 30,
     lookback_hours: parseInt($('asLookback').value) || 24,
-    nightly_cap: parseInt($('asCap').value) || 30,
+    daily_cap: parseInt($('asCap').value) || 70,
+    live_recheck_min: parseInt($('asRecheck').value) || 45,
     tz_offset: parseInt($('asTz').value),
   };
   if (isNaN(payload.tz_offset)) payload.tz_offset = 3;
@@ -1372,6 +1399,34 @@ async function saveKey() {
   await refreshKey();
 }
 
+async function saveVerifyKeys() {
+  const payload = {};
+  const or_ = ($('verifyKeyOpenrouter') && $('verifyKeyOpenrouter').value.trim()) || '';
+  const gq = ($('verifyKeyGroq') && $('verifyKeyGroq').value.trim()) || '';
+  const mi = ($('verifyKeyMistral') && $('verifyKeyMistral').value.trim()) || '';
+  if (or_) payload.openrouter_api_key = or_;
+  if (gq) payload.groq_api_key = gq;
+  if (mi) payload.mistral_api_key = mi;
+  if (!Object.keys(payload).length) { toast('En az bir anahtar girin', 'error'); return; }
+  await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  ['verifyKeyOpenrouter','verifyKeyGroq','verifyKeyMistral'].forEach(id => { if ($(id)) $(id).value = ''; });
+  toast('Doğrulama anahtarları kaydedildi — sonraki analizden itibaren aktif', 'success');
+  loadVerifyKeyPreviews();
+}
+
+async function loadVerifyKeyPreviews() {
+  try {
+    const d = await (await fetch('/api/config')).json();
+    const vk = d.verify_keys || {};
+    if ($('vkOpenrouter')) $('vkOpenrouter').textContent = vk.openrouter ? `✓ ${vk.openrouter}` : '';
+    if ($('vkGroq')) $('vkGroq').textContent = vk.groq ? `✓ ${vk.groq}` : '';
+    if ($('vkMistral')) $('vkMistral').textContent = vk.mistral ? `✓ ${vk.mistral}` : '';
+  } catch (e) {}
+}
+
 // ─── Queue polling ───
 async function pollQueue() {
   try {
@@ -1386,15 +1441,29 @@ async function pollQueue() {
       stateEl.textContent = 'Boş';
       stateEl.style.color = 'var(--green)';
     }
-    lenEl.textContent = d.queue_length;
+    // queue_length = bekleyen sayısı (çalışan hariç) — "sırada" olarak göster
+    lenEl.textContent = d.queue_length ? `${d.queue_length} sırada` : '';
     msgEl.textContent = (d.message || '').slice(0, 80);
+
+    // Çalışan iş: başlık + ilerleme çubuğu (tıklayınca canlı analiz sayfası)
+    const qr = $('queueRunning');
+    if (qr) {
+      const ri = d.running_item;
+      if (ri) {
+        qr.style.display = 'block';
+        $('queueRunningLabel').textContent = ri.label || '';
+        $('queueRunningBar').style.width = `${Math.max(0, Math.min(100, ri.progress || 0))}%`;
+      } else {
+        qr.style.display = 'none';
+      }
+    }
 
     // Sırada bekleyenlerin önizlemesi
     const qi = $('queueItems');
     if (qi) {
       const items = d.queued_items || [];
       qi.innerHTML = items.length
-        ? items.map(x => `<div style="font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0">${esc(x)}</div>`).join('')
+        ? items.map(x => `<div style="font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 0">${x.position}. ${esc(x.label)}</div>`).join('')
           + (d.queue_length > items.length ? `<div style="font-size:10px;color:var(--dimmer)">+${d.queue_length - items.length} daha...</div>` : '')
         : '';
     }
@@ -1438,7 +1507,7 @@ async function loadHome() {
   const channels = chRes.channels || [];
   const today = rep.today || {video_count: 0, ad_frames: 0, top_brands: []};
   const week = rep.week || {video_count: 0, ad_frames: 0, top_brands: []};
-  const dateStr = new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'});
+  const dateStr = new Date().toLocaleDateString('tr-TR', {timeZone:'Europe/Istanbul', weekday:'long', day:'numeric', month:'long'});
 
   // ── Başlık + hızlı analiz ──
   let html = `
@@ -1556,22 +1625,23 @@ async function loadAutoScanPanel() {
   const on = d.enabled;
   const pillCls = d.in_window ? 'as-pill live' : 'as-pill';
   const pillTxt = !on ? '<i class="ti ti-player-pause"></i> Kapalı'
-    : (d.in_window ? '<i class="ti ti-broadcast"></i> Tarama penceresinde'
-                   : '<i class="ti ti-moon"></i> Beklemede');
+    : (d.in_window ? '<i class="ti ti-broadcast"></i> Yoğun pencere'
+                   : '<i class="ti ti-sun"></i> Normal mod');
   const lives = d.recent_lives || [];
+  const waiting = d.waiting_live || 0;
 
   let html = `<div class="autoscan">
     <div class="as-head">
       <div class="as-ico"><i class="ti ti-radar-2"></i></div>
       <div>
-        <div class="as-title">Otomatik Gece Taraması</div>
-        <div class="as-sub">Her gün ${esc(w.start||'03:00')}–${esc(w.end||'09:30')} · her ${d.interval_min||15} dk'da bir canlı yayın · kanalların canlı yayınları</div>
+        <div class="as-title">Otomatik Tarama (7/24)</div>
+        <div class="as-sub">Gündüz her ${d.day_interval_min||30} dk · gece ${esc(w.start||'03:00')}–${esc(w.end||'09:30')} yoğun mod (her ${d.interval_min||15} dk) · süren yayınlar bitince analiz edilir${waiting ? ` · <span style="color:var(--red)">${waiting} canlı bekleniyor</span>` : ''}</div>
       </div>
       <span class="${pillCls}">${pillTxt}</span>
     </div>
     <div class="as-stats">
-      <div class="as-stat"><div class="as-stat-num">${d.tonight_analyzed||0}<span style="font-size:13px;opacity:.7">/${d.nightly_cap||30}</span></div><div class="as-stat-lbl">Bu gece analiz</div></div>
-      <div class="as-stat"><div class="as-stat-num">${d.tonight_found||0}</div><div class="as-stat-lbl">Bu gece bulunan</div></div>
+      <div class="as-stat"><div class="as-stat-num">${d.today_analyzed||0}<span style="font-size:13px;opacity:.7">/${d.daily_cap||70}</span></div><div class="as-stat-lbl">Bugün analiz</div></div>
+      <div class="as-stat"><div class="as-stat-num">${d.today_found||0}</div><div class="as-stat-lbl">Bugün bulunan</div></div>
       <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.last_run_iso)}</div><div class="as-stat-lbl">Son çalışma</div></div>
       <div class="as-stat"><div class="as-stat-num" style="font-size:15px;padding-top:4px">${_fmtClock(d.next_run_iso)}</div><div class="as-stat-lbl">Sıradaki çalışma</div></div>
     </div>
@@ -1581,21 +1651,36 @@ async function loadAutoScanPanel() {
     </div>
   </div>`;
 
-  // Bu gece yakalanan canlı yayınlar
+  // Son yakalanan canlı yayınlar (30 saatlik pencere — gündüz manueller dahil)
   html += `<div class="section">
     <div class="section-head">
-      <div class="section-title-lg"><i class="ti ti-broadcast" style="color:var(--accent)"></i> Bu Gece Yakalananlar</div>
+      <div class="section-title-lg"><i class="ti ti-broadcast" style="color:var(--accent)"></i> Son Yakalanan Canlı Yayınlar <span style="font-size:11px;font-weight:400;color:var(--dimmer)">son 30 saat</span></div>
       <div class="report-meta" style="cursor:pointer;color:var(--accent)" onclick="goLiveArchive()">Tümü (günlük) →</div>
     </div>`;
   if (!lives.length) {
     html += `<div class="empty-card" style="border:none;background:transparent">Henüz canlı yayın yakalanmadı. Tarama penceresinde (${esc(w.start||'03:00')}–${esc(w.end||'09:30')}) çalışır; hemen denemek için "Şimdi bir yayın tara".</div>`;
   } else {
     html += lives.map(v => {
-      const done = v.analyzed;
+      // "analiz edildi" yalnızca videos kaydı gerçekten varsa — yoksa 404 linki oluşur
+      const done = !!v.has_video;
+      let stTxt, icon, color;
+      if (done) {
+        stTxt = 'analiz edildi' + (v.ad_frame_count ? ` · ${v.ad_frame_count} reklam` : '');
+        icon = 'ti-circle-check'; color = 'var(--green)';
+      } else if (v.status === 'live_wait') {
+        stTxt = 'canlı — bitmesi bekleniyor'; icon = 'ti-broadcast'; color = 'var(--red)';
+      } else if (v.status === 'queued') {
+        stTxt = 'işleniyor'; icon = 'ti-loader-2'; color = 'var(--amber)';
+      } else if (v.status === 'failed' || v.status === 'permanent') {
+        stTxt = 'başarısız'; icon = 'ti-alert-circle'; color = 'var(--red)';
+      } else {
+        stTxt = 'sırada'; icon = 'ti-clock-hour-4'; color = 'var(--amber)';
+      }
+      const ch = v.channel_name || v.channel_id || '';
       return `<div class="lb-row" onclick="${done ? `goVideo('${jsq(v.video_id)}')` : ''}" style="${done?'':'cursor:default'}">
-        <i class="ti ${done?'ti-circle-check':'ti-clock-hour-4'}" style="font-size:18px;color:${done?'var(--green)':'var(--amber)'};flex-shrink:0"></i>
-        <div class="lb-name" style="width:auto;flex:1">${esc(v.title || v.video_id)}</div>
-        <div class="lb-meta">${esc((v.seen_at||'').slice(11,16))} · ${done?'analiz edildi':'sırada'}</div>
+        <i class="ti ${icon}" style="font-size:18px;color:${color};flex-shrink:0"></i>
+        <div class="lb-name" style="width:auto;flex:1">${ch ? `<span style="color:var(--dim)">${esc(ch)} · </span>` : ''}${esc(v.title || v.video_id)}</div>
+        <div class="lb-meta">${fmtTRTime(v.seen_at)} · ${stTxt}</div>
       </div>`;
     }).join('');
   }
@@ -1952,17 +2037,22 @@ async function pollLive() {
         loadRecentSidebar();
       } else {
         _liveWaitCount++;
-        // After 25 polls (50s) with no video, assume something is wrong
-        if (_liveWaitCount > 25) {
+        // Aktif analiz yoksa hemen (2 poll ~4sn tolerans) boş durumu + kuyruğu göster;
+        // polling devam eder — iş başlarsa renderLive devralır.
+        if (_liveWaitCount > 2) {
           _showLiveNoVideo();
         }
-        // else: keep showing loading screen — job is in queue, not yet started
       }
       return;
     }
     _liveWaitCount = 0;
     renderLive(d);
     if (d.status === 'completed') {
+      // "Sonuca git" aksiyonu — sayfa ~60 sn sonra boşalacağı için kalıcı link
+      if (d.video_id && $('lv-actions') && !$('lv-goresult')) {
+        $('lv-actions').insertAdjacentHTML('beforeend',
+          `<button class="btn sm" id="lv-goresult" onclick="goVideo('${jsq(d.video_id)}')">Sonuca git <i class="ti ti-arrow-right"></i></button>`);
+      }
       setTimeout(() => {
         stopLivePolling();
         loadRecentSidebar();
@@ -1971,24 +2061,62 @@ async function pollLive() {
   } catch (e) {}
 }
 
-function _showLiveNoVideo() {
+let _liveIdleSig = null;
+async function _showLiveNoVideo() {
   if (state.page !== 'live') return;
   _liveBuilt = false;
+
+  // Kuyruğu da göster: analiz yoksa bile "ne yapılacak" görünür olsun
+  let q = null;
+  try { q = await (await fetch('/api/queue')).json(); } catch (e) {}
+  if (state.page !== 'live' || _liveBuilt) return;  // fetch sırasında sayfa değişmiş olabilir
+  const ri = q && q.running_item;
+  const items = (q && q.queued_items) || [];
+  const qlen = (q && q.queue_length) || 0;
+
+  // Aynı içerikse yeniden çizme (2 sn'de bir flicker olmasın)
+  const sig = JSON.stringify([ri && ri.label, ri && ri.progress, items.map(x => x.label), qlen]);
+  if (sig === _liveIdleSig && $('lv-idle')) return;
+  _liveIdleSig = sig;
+
+  const hasWork = !!ri || items.length > 0;
+  let body = '';
+  if (ri) {
+    body += `
+      <div class="section">
+        <div class="section-head"><div class="section-title-lg">Şu An İşleniyor</div></div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:6px">${esc(ri.label || '')}</div>
+        ${ri.step ? `<div style="font-size:11px;color:var(--dim);margin-bottom:6px">${esc(q.message || ri.step)}</div>` : ''}
+        <div style="background:var(--bg3);border-radius:6px;height:8px;overflow:hidden">
+          <div style="background:var(--amber);height:100%;width:${Math.max(0, Math.min(100, ri.progress || 0))}%;transition:width .5s"></div>
+        </div>
+      </div>`;
+  }
+  if (items.length) {
+    body += `
+      <div class="section">
+        <div class="section-head"><div class="section-title-lg">Sırada Bekleyenler</div></div>
+        ${items.map(x => `<div style="font-size:12px;color:var(--dim);padding:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${x.position}. ${esc(x.label)}</div>`).join('')}
+        ${qlen > items.length ? `<div style="font-size:11px;color:var(--dimmer);padding-top:3px">+${qlen - items.length} daha...</div>` : ''}
+      </div>`;
+  }
+  if (!hasWork) {
+    body = `<div class="empty-card">Analiz başlatmak için bir kanaldan video seçin ya da üstteki kutuya YouTube linki yapıştırın.</div>`;
+  }
+
   $('main').innerHTML = `
-    <div class="page-header">
+    <div class="page-header" id="lv-idle">
       <div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span class="btn sm" style="cursor:pointer" onclick="exitLive()">
             <i class="ti ti-arrow-left"></i> Geri
           </span>
         </div>
-        <h1>Aktif Analiz Yok</h1>
-        <div class="subtitle">Şu anda canlı analiz edilen video yok</div>
+        <h1>${hasWork ? 'Analiz Bekleniyor' : 'Aktif Analiz Yok'}</h1>
+        <div class="subtitle">${hasWork ? 'Sıradaki işler aşağıda — analiz başlayınca bu sayfa canlanır' : 'Şu anda canlı analiz edilen video yok'}</div>
       </div>
     </div>
-    <div class="empty-card">
-      Analiz başlatmak için bir kanaldan video seçin.
-    </div>
+    ${body}
   `;
 }
 
@@ -2231,7 +2359,7 @@ async function loadChannel(id) {
     html += `<div class="video-list">`;
     for (const v of d.videos) {
       const badgeClass = v.ad_frame_count === 0 ? 'zero' : '';
-      const date = v.analyzed_at ? new Date(v.analyzed_at).toLocaleDateString('tr-TR') : '';
+      const date = v.analyzed_at ? fmtTRDate(v.analyzed_at) : '';
       html += `<div class="video-card" onclick="goVideo('${esc(v.id)}')">
         <img class="video-thumb" src="${esc(v.thumbnail || '')}" loading="lazy" onerror="this.style.opacity=0.3">
         <div class="video-body">
@@ -2369,12 +2497,37 @@ function goLiveArchive() {
 }
 
 const _GUN = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+
+// ─── Türkiye saati yardımcıları ───
+// Backend tüm zamanları naive UTC ISO (Z'siz) saklar. Bu yardımcılar Z ekleyip
+// Europe/Istanbul'a çevirir — ham .slice(11,16)/.slice(0,10) KULLANMA (3 saat kayar).
+const _TRTZ = 'Europe/Istanbul';
+function _isoUTC(iso) {
+  if (!iso) return null;
+  const s = String(iso);
+  return (s.endsWith('Z') || s.includes('+')) ? s : s + 'Z';
+}
+function fmtTRTime(iso) {
+  const s = _isoUTC(iso); if (!s) return '—';
+  const d = new Date(s);
+  return isNaN(d) ? '—' : new Intl.DateTimeFormat('tr-TR', {timeZone:_TRTZ, hour:'2-digit', minute:'2-digit'}).format(d);
+}
+function fmtTRDate(iso) {
+  const s = _isoUTC(iso); if (!s) return '—';
+  const d = new Date(s);
+  return isNaN(d) ? '—' : new Intl.DateTimeFormat('tr-TR', {timeZone:_TRTZ, day:'2-digit', month:'2-digit', year:'numeric'}).format(d);
+}
+function trDayKey(iso) {
+  // "YYYY-MM-DD" (İstanbul günü) — gün gruplama anahtarı
+  const s = _isoUTC(iso); if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d) ? '' : new Intl.DateTimeFormat('en-CA', {timeZone:_TRTZ, year:'numeric', month:'2-digit', day:'2-digit'}).format(d);
+}
+
 function _dayLabel(ymd) {
-  // ymd: "YYYY-MM-DD". Bugün/Dün etiketi + tarih.
-  const now = new Date();
-  const t = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-  const y = new Date(now.getTime() - 86400000);
-  const yt = `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,'0')}-${String(y.getDate()).padStart(2,'0')}`;
+  // ymd: "YYYY-MM-DD" (İstanbul günü — trDayKey üretir). Bugün/Dün etiketi + tarih.
+  const t = trDayKey(new Date().toISOString());
+  const yt = trDayKey(new Date(Date.now() - 86400000).toISOString());
   const parts = ymd.split('-');
   const d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
   const pretty = `${parts[2]}.${parts[1]}.${parts[0]} · ${_GUN[d.getDay()]}`;
@@ -2400,10 +2553,10 @@ async function loadLiveArchive() {
     return;
   }
 
-  // Güne göre grupla (analyzed_at)
+  // Güne göre grupla (analyzed_at, İstanbul günü)
   const groups = {};
   for (const v of vids) {
-    const day = (v.analyzed_at || '').slice(0, 10) || 'bilinmiyor';
+    const day = trDayKey(v.analyzed_at) || 'bilinmiyor';
     (groups[day] = groups[day] || []).push(v);
   }
   const days = Object.keys(groups).sort().reverse();
@@ -2424,7 +2577,7 @@ async function loadLiveArchive() {
         <img class="recent-thumb" style="width:72px;height:40px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
         <div class="brand-vid-info" style="flex:1;min-width:0">
           <div class="brand-vid-title">${esc(v.title)}</div>
-          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${esc((v.analyzed_at||'').slice(11,16))}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${fmtTRTime(v.analyzed_at)}</div>
         </div>
         ${badge}
       </div>`;
@@ -2772,7 +2925,7 @@ async function loadAnalyses() {
         <img class="recent-thumb" style="width:64px;height:36px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
         <div class="brand-vid-info">
           <div class="brand-vid-title">${esc(v.title)}</div>
-          <div class="brand-vid-ch">${esc(v.channel_name)} · ${esc((v.analyzed_at||'').slice(0,10))} · ${v.total_frames} kare${(v.top_brands||[]).length ? ' · ' + v.top_brands.map(b=>esc(b[0])).join(', ') : ''}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name)} · ${fmtTRDate(v.analyzed_at)} · ${v.total_frames} kare${(v.top_brands||[]).length ? ' · ' + v.top_brands.map(b=>esc(b[0])).join(', ') : ''}</div>
         </div>
         <div class="recent-ads">${v.ad_frame_count} reklam</div>
         <button class="tespit-del admin-only" title="Analizi sil" onclick="event.stopPropagation(); deleteAnalysis('${jsq(v.id)}', loadAnalyses)"><i class="ti ti-trash"></i></button>
@@ -2829,7 +2982,7 @@ async function loadBrandDetail(name) {
         <img class="recent-thumb" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
         <div class="brand-vid-info">
           <div class="brand-vid-title">${esc(v.title)}</div>
-          <div class="brand-vid-ch">${esc(v.channel_name)} · ${esc((v.analyzed_at||'').slice(0,10))}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name)} · ${fmtTRDate(v.analyzed_at)}</div>
         </div>
         <div class="recent-ads">${v.count} reklam</div>
       </div>`).join('') : '<div class="empty-card">Görünüm yok</div>'}
@@ -2893,6 +3046,22 @@ async function loadVideo(id) {
       örnekleme ${xs.interval_seconds || '?'} sn
       <span class="metric-help" onclick="showMetricHelp()">metrikler ne demek?</span>
     </div>
+    ${v.is_partial ? `<div class="section" style="border-left:3px solid var(--amber);padding:10px 14px;font-size:13px">
+      <i class="ti ti-broadcast" style="color:var(--amber)"></i>
+      <strong>Canlı önizleme</strong> — bu analiz yayın sürerken yalnızca ilk ~10 dakikayı örnekledi.
+      Yayın bitince tam analiz otomatik yapılır ve bu sonucun üstüne yazılır. Bu video istatistiklere dahil edilmez.
+    </div>` : ''}
+    ${(() => {
+      // 2. model doğrulama özeti (detections.verify_status'tan)
+      const vs = (d.detections || []).filter(x => x.verify_status);
+      if (!vs.length) return '';
+      const c = vs.filter(x => x.verify_status === 'confirmed').length;
+      const rj = vs.filter(x => x.verify_status === 'rejected').length;
+      return `<div class="metric-note" style="margin-top:4px">
+        <i class="ti ti-shield-check" style="color:var(--green)"></i>
+        2. model doğrulaması: ${c}/${vs.length} kare onaylandı${rj ? ` · <span style="color:var(--amber)">${rj} kare tesadüfi görünüm (sayımdan düşürüldü)</span>` : ''}
+      </div>`;
+    })()}
   `;
 
   // Sürekli ekran öğeleri (kalıcı bindirmeler)
@@ -3633,7 +3802,7 @@ async function loadDailyBrands() {
   catch (e) { $('main').innerHTML = '<div class="empty-card">Yüklenemedi</div>'; return; }
   const today = d.today || {video_count: 0, ad_frames: 0, top_brands: []};
   const week = d.week || {video_count: 0, ad_frames: 0, top_brands: []};
-  const dateStr = new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'});
+  const dateStr = new Date().toLocaleDateString('tr-TR', {timeZone:'Europe/Istanbul', weekday:'long', day:'numeric', month:'long'});
 
   let html = `<div class="page-header"><div>
       <h1>Günün Markaları</h1>
@@ -3701,7 +3870,7 @@ async function loadSearch(q) {
         <img class="recent-thumb" style="width:64px;height:36px" src="${esc(v.thumbnail||'')}" onerror="this.style.opacity=0.2">
         <div class="brand-vid-info">
           <div class="brand-vid-title">${esc(v.title)}</div>
-          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${esc((v.analyzed_at||'').slice(0,10))}</div>
+          <div class="brand-vid-ch">${esc(v.channel_name||'')} · ${fmtTRDate(v.analyzed_at)}</div>
         </div>
         <div class="recent-ads">${v.ad_frame_count} reklam</div>
       </div>`).join('') + `</div>`;

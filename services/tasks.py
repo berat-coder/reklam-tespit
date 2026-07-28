@@ -6,6 +6,7 @@ ve thread worker'lardan (process_video_sync / process_channel_scan_sync) çağr�
 
 import os
 import re
+import json
 import time
 import base64
 import shutil
@@ -20,6 +21,8 @@ from config import (
     FRAME_INTERVAL, FRAME_WIDTH, SOURCE_MIN_HEIGHT, BATCH_SIZE,
     SCENE_DIFF_THRESHOLD, LOWER_BAND_THRESHOLD,
     TARGET_SAMPLE_FRAMES, MAX_API_FRAMES,
+    FRAME_SEEK_WORKERS, FRAME_SEEK_TIMEOUT, FRAME_SEEK_FAST,
+    FRAME_SEEK_RW_TIMEOUT_SEC, BRAND_TUR_FRAME_CAP,
 )
 from services import frame_sync
 from services.gemini import gemini_analyze_batch, gemini_extract_brands
@@ -28,7 +31,7 @@ from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from
 from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
-    log_event, mark_live_status, _exposure_map,
+    log_event, mark_live_status, mark_live_seen, set_live_wait, _exposure_map,
 )
 
 
@@ -104,18 +107,30 @@ def _ffmpeg_proxy_args():
     return ["-http_proxy", proxy] if proxy else []
 
 
-def _ffmpeg_seek_frame(stream_url, out_path, t, width):
+def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
     """Tek bir zaman noktasından `-ss` (input seek = HTTP range) ile 1 frame çeker.
-    Tüm videoyu indirmez — sadece o anın etrafındaki birkaç KB'ı indirir."""
+    Tüm videoyu indirmez — sadece o anın etrafındaki byte'ları indirir.
+
+    fast=True (keyframe modu): -noaccurate_seek + -skip_frame nokey → t'den önceki
+    en yakın keyframe alınır. Hassas mod keyframe'den t'ye kadar TÜM 1080p kareleri
+    decode ediyordu (kare başı 2-4 sn CPU) ve aradaki byte'ları da indiriyordu;
+    keyframe modu ikisini de sıfırlar. Zaman kayması ≤ ~5 sn (YouTube keyint),
+    örnekleme aralığı ≥8 sn olduğundan kare kaybı/tekrarı olmaz."""
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error",
         *_ffmpeg_proxy_args(),
+        # Takılan ağ okuması slotu bekletmesin; index + range tek TCP bağlantısını
+        # yeniden kullansın; kopan bağlantı sessizce yeniden denensin.
+        "-rw_timeout", str(FRAME_SEEK_RW_TIMEOUT_SEC * 1_000_000),
+        "-multiple_requests", "1",
+        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+        *(["-noaccurate_seek", "-skip_frame", "nokey"] if fast else []),
         "-ss", str(t), "-i", stream_url,
         "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4",
         "-y", str(out_path),
     ]
     try:
-        subprocess.run(cmd, timeout=90,
+        subprocess.run(cmd, timeout=FRAME_SEEK_TIMEOUT,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
     except Exception:
@@ -173,27 +188,45 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
     if not timestamps:
         timestamps = [0]
     results = [None] * len(timestamps)
-    done = 0
+    cancelled = False
 
-    ex = ThreadPoolExecutor(max_workers=6)
-    try:
-        futs = {}
-        for idx, t in enumerate(timestamps):
-            out_path = frames_dir / f"frame_{idx + 1:04d}.jpg"
-            futs[ex.submit(_ffmpeg_seek_frame, stream_url, out_path, t, width)] = (idx, t)
-        for fut in as_completed(futs):
-            idx, t = futs[fut]
-            p = fut.result()
-            if p:
-                results[idx] = (p, t)
-            done += 1
-            if on_progress:
-                on_progress(done, len(timestamps))
-            if cancel_check and cancel_check():
-                break
-    finally:
-        # İptalde bekleyen işleri iptal et — "Tümünü Durdur" anında etki etsin
-        ex.shutdown(wait=False, cancel_futures=True)
+    def _run_pass(indices, fast, workers, done_offset=0):
+        nonlocal cancelled
+        done = done_offset
+        ex = ThreadPoolExecutor(max_workers=workers)
+        try:
+            futs = {}
+            for idx in indices:
+                out_path = frames_dir / f"frame_{idx + 1:04d}.jpg"
+                futs[ex.submit(_ffmpeg_seek_frame, stream_url, out_path,
+                               timestamps[idx], width, fast)] = idx
+            for fut in as_completed(futs):
+                idx = futs[fut]
+                p = fut.result()
+                if p:
+                    results[idx] = (p, timestamps[idx])
+                done += 1
+                if on_progress:
+                    on_progress(min(done, len(timestamps)), len(timestamps))
+                if cancel_check and cancel_check():
+                    cancelled = True
+                    break
+        finally:
+            # İptalde bekleyen işleri iptal et — "Tümünü Durdur" anında etki etsin
+            ex.shutdown(wait=False, cancel_futures=True)
+
+    fast = bool(FRAME_SEEK_FAST)
+    _run_pass(range(len(timestamps)), fast=fast, workers=FRAME_SEEK_WORKERS)
+
+    # Onarım geçişi: hızlı (keyframe) modda başarısız kalan noktaları bir kez
+    # hassas modla dene — bazı format/proxy kombinasyonlarında keyframe seek
+    # tek tük 403/EOF verebiliyor.
+    if fast and not cancelled:
+        missing = [i for i, r in enumerate(results) if r is None]
+        if missing:
+            print(f"[VIDEO] hızlı seek {len(missing)} karede boş kaldı — hassas modla onarılıyor")
+            _run_pass(missing, fast=False, workers=4,
+                      done_offset=len(timestamps) - len(missing))
 
     return [r for r in results if r]
 
@@ -336,8 +369,8 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
         last_scanned=datetime.utcnow().isoformat()
     )
 
-    from models.database import mark_live_seen
     added = 0
+    waiting = 0
     for v in res["videos"]:
         if _cancelled(job_manager):     # "Tümünü Durdur" → kuyruğu doldurmayı bırak
             print("[KANAL-TARAMA] iptal edildi — kalan videolar eklenmedi")
@@ -346,20 +379,32 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
         # (gece taraması 'görüldü' demiş olsa bile bekleyen/başarısızı yeniden analiz et).
         if is_video_completed(v["id"]):
             continue
-        is_live = bool(v.get("is_live")) or v.get("tab") in ("streams", "live")
+        was_live = v.get("tab") in ("streams", "live")
+        if v.get("is_live"):
+            # Yayın SÜRÜYOR → kuyruklama; bitince zamanlayıcı tam analize gönderir
+            # (canlı-kenar örneklemesi yalnız ~10 dk görür, yanlış veri üretir).
+            mark_live_seen(v["id"], channel_id=channel_id,
+                           title=v.get("title", ""), url=v.get("url", ""))
+            set_live_wait(v["id"])
+            waiting += 1
+            continue
         job_manager.add_video(
             v["url"],
             channel_id=channel_id,
             channel_name=channel_name,
+            title=v.get("title", ""),
         )
-        if is_live:
+        if was_live:
+            # 'done' DEĞİL — analiz gerçekten bitince tasks.py 'done' yazar;
+            # erken 'done' UI'da videos kaydı olmayan "analiz edildi" 404 linki üretiyordu.
             mark_live_seen(v["id"], channel_id=channel_id,
-                           title=v.get("title", ""), url=v.get("url", ""),
-                           analyzed=True)
+                           title=v.get("title", ""), url=v.get("url", ""))
+            mark_live_status(v["id"], "queued")
         added += 1
-    print(f"[KANAL-TARAMA] {channel_name}: {added} yeni video sıraya alındı")
+    wait_note = f" · {waiting} canlı (bitince analiz)" if waiting else ""
+    print(f"[KANAL-TARAMA] {channel_name}: {added} yeni video sıraya alındı{wait_note}")
     log_event("channel_scan", channel_name, "ok", "success",
-              f"{added} yeni video sıraya alındı ({len(res['videos'])} bulundu)")
+              f"{added} yeni video sıraya alındı ({len(res['videos'])} bulundu){wait_note}")
 
 
 # ── Video analizi ─────────────────────────────────────────────────────────────
@@ -478,6 +523,25 @@ def _analyze_video_core(
     duration = info.get("duration", 0) or 0
     description = info.get("description", "") or ""
     thumb_url = info.get("thumbnail", "")
+
+    # ── Canlı yayın kontrolü ──
+    # Yayın SÜRERKEN yapılan analiz yalnız canlı-kenardan ~10 dk örnekler, sahte
+    # zaman damgaları üretir ve agregatları çarpıtır. Zamanlayıcı bu videoları hiç
+    # buraya göndermez (live_wait); yine de gelirse (manuel URL analizi) KISMİ
+    # ÖNİZLEME olarak işaretlenir ve yayın bitince tam analiz üstüne yazar.
+    live_status = info.get("live_status") or ("is_live" if info.get("is_live") else "")
+    if live_status == "is_upcoming":
+        msg = "Yayın henüz başlamadı — başlayıp bitince otomatik analiz edilecek"
+        status(msg)
+        mark_live_seen(video_id, channel_id=channel_id or "", title=title, url=url)
+        set_live_wait(video_id)
+        on_set_live(status="error", message=msg, progress=0)
+        return
+    is_partial = bool(live_status == "is_live" or duration <= 0)
+    if is_partial:
+        status("⚠️ Canlı yayın — ilk ~10 dk önizleme; yayın bitince tam analiz yapılır")
+        mark_live_seen(video_id, channel_id=channel_id or "", title=title, url=url)
+        set_live_wait(video_id)   # bitince tam analiz planlansın
 
     if not channel_id:
         channel_id = channel_id_from_url(
@@ -725,7 +789,7 @@ def _analyze_video_core(
             filtered = []
             for t in res.get("tespitler", []):
                 norm = _normalize_brand(t.get("marka", "")) + "|" + (t.get("tur", "") or "")
-                if len(ad_appearances.get(norm, [])) < 3:
+                if len(ad_appearances.get(norm, [])) < BRAND_TUR_FRAME_CAP:
                     filtered.append(t)
                     ad_appearances.setdefault(norm, []).append(fd["index"])
 
@@ -829,6 +893,7 @@ def _analyze_video_core(
         brand_exposure=_exposure_map(agg),   # süre/olay → panel, trend, EMV
         desc_brands=desc_brands,
         completed=True,
+        is_partial=is_partial,
     )
 
     # TÜM kareler diskte kalır (kullanıcı temiz kareleri de inceleyebilsin —
@@ -861,13 +926,175 @@ def _analyze_video_core(
         status("Kareler panele yükleniyor...")
         frame_sync.wait(180)
 
+    if is_partial:
+        msg = f"✓ Önizleme tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam (ilk ~10 dk)"
+        status(msg)
+        log_event("video", title or url, "ok", "partial",
+                  f"canlı önizleme · {agg['ad_frame_count']} reklam · {analyzed} kare "
+                  "— yayın bitince tam analiz yapılacak")
+        # 'done' YAZMA: live_wait kalır → yayın bitince tam analiz kuyruğa girer
+        set_live_wait(video_id)
+        on_set_live(
+            status="completed", progress=100,
+            message=f"Önizleme tamamlandı — {agg['ad_frame_count']} reklam "
+                    "(yayın bitince tam analiz yapılacak)",
+        )
+        return
+
     msg = f"✓ Tamamlandı: {title[:35]} · {agg['ad_frame_count']} reklam"
     status(msg)
     # Başarı: logla + (canlı yayınsa) durumu 'done' yap
     log_event("video", title or url, "ok", "success",
               f"{agg['ad_frame_count']} reklam · {analyzed} kare")
     mark_live_status(video_id, "done")
+
+    # 2. model doğrulaması: reklam bulunan kareleri farklı bir görsel modele
+    # tekrar sorar (yanlış pozitif avcısı). Hata birincil analizi ASLA bozmaz.
+    if agg["ad_frame_count"] > 0:
+        try:
+            from services.job_manager import JOB_MANAGER
+            JOB_MANAGER.add_verify(video_id)
+        except Exception as e:
+            print(f"[DOĞRULAMA] kuyruklanamadı (atlandı): {e}")
+
     on_set_live(
         status="completed", progress=100,
         message=f"Tamamlandı — {agg['ad_frame_count']} reklam tespit",
     )
+
+
+# ── 2. model doğrulaması (yanlış pozitif avcısı) ──────────────────────────────
+
+def process_verify_rq(video_id):
+    """RQ worker'dan çağrılır (yeni iş türü — mevcut imzalar değişmedi)."""
+    _verify_video_core(video_id)
+
+
+def process_verify_sync(job, _api_key, job_manager):
+    """Thread worker'dan çağrılır."""
+    _verify_video_core(job.get("video_id", ""))
+
+
+_VERIFY_PROMPT = """GÖREV: Aşağıdaki karelerde bir yapay zeka REKLAM tespit etti.
+Sen ikinci bir denetçisin. Her kare için soruyu yanıtla:
+
+Bu karedeki marka görünümü YAYINA EKLENMİŞ/KASITLI bir reklam mı (overlay,
+banner, alt bant, sponsor bandı, tam ekran reklam, kanalın stüdyosuna kasıtlı
+yerleştirilmiş ürün), yoksa TESADÜFİ bir marka görünümü mü?
+
+TESADÜFİ sayılır (reklam DEĞİLDİR):
+- Sporcunun GİYDİĞİ formadaki sponsor markası (futbol/voleybol/basketbol fark etmez)
+- Basın toplantısı masasındaki su şişesi/bardak — konuşmacının içme suyu
+- Kulübün basın panosu / backdrop / stadyum tabelası
+- Reklamın içinde görünen başka ürünlerin markaları, pazaryeri logoları
+- Kanal logosu, kulüp arması, lig/turnuva logosu
+
+(TASK: You are a second reviewer. For each frame decide whether the brand
+appearance is a DELIBERATE broadcast ad (overlay/banner/sponsor strip/product
+placement staged by the channel) or an INCIDENTAL appearance (athlete's jersey
+sponsor, a water bottle on a press-conference desk, club press backdrop,
+marketplace logo, channel/club identity). Incidental is NOT an ad.)
+
+İDDİALAR (frame → tespitler):
+{claims}
+
+YANIT — SADECE şu JSON dizisi, başka hiçbir şey yazma:
+[{{"frame": <numara>, "karar": "reklam" | "tesadufi" | "belirsiz", "neden": "<kısa Türkçe gerekçe>"}}]
+Her kare için TEK nesne. Emin değilsen "belirsiz" de."""
+
+
+def _verify_video_core(video_id):
+    """Reklam bayraklı kareleri ikinci modele sorar, 'tesadufi' çıkanların güvenini
+    'Düşük'e indirir (sayımdan düşer, kanıt kalır) ve agregatları yeniden hesaplar.
+    Tamamı hata-yalıtımlıdır: ne olursa olsun birincil analiz sonucu değişmez."""
+    try:
+        from services.vision_providers import (
+            get_verifier, VERIFY_BATCH_SIZE, verify_budget_left, verify_budget_spend)
+        from models.database import (
+            get_detections, update_detection_verify, recompute_video_aggregates)
+
+        cfg = load_config()
+        verifier = get_verifier(cfg)
+        if verifier is None:
+            return   # anahtar yok → doğrulama devre dışı (sessiz)
+
+        excluded = set(cfg.get("excluded_placements") or [])
+        dets = get_detections(video_id)
+        targets = []
+        for d in dets:
+            if not d.get("reklam_var") or d.get("manual_clean"):
+                continue
+            if d.get("verify_status"):
+                continue   # daha önce bakılmış
+            tespitler = d.get("tespitler") or []
+            # Yalnız SAYILAN tespiti olan kareler (Forma/Ürün Markası zaten sayılmıyor)
+            if tespitler and not any((t.get("tur") or "") not in excluded for t in tespitler):
+                continue
+            targets.append(d)
+        if not targets:
+            return
+
+        print(f"[DOĞRULAMA] {video_id}: {len(targets)} reklam karesi "
+              f"{verifier.name}/{verifier.model} ile denetleniyor")
+        confirmed = rejected = uncertain = 0
+        for b in range(0, len(targets), VERIFY_BATCH_SIZE):
+            chunk = targets[b:b + VERIFY_BATCH_SIZE]
+            if verify_budget_left() <= 0:
+                print("[DOĞRULAMA] günlük bütçe doldu — kalan kareler atlandı")
+                break
+            frames, claims = [], []
+            for d in chunk:
+                fname = (d.get("frame_url") or "").rsplit("/", 1)[-1]
+                fpath = FRAMES_DIR / video_id / fname
+                if not fname or not fpath.exists():
+                    continue
+                frames.append({"index": d["index"], "b64": _b64_file(fpath)})
+                ts = "; ".join(
+                    f"{t.get('marka') or '?'} ({t.get('tur') or '?'}, {t.get('konum') or '?'})"
+                    for t in (d.get("tespitler") or [])) or ", ".join(d.get("markalar") or [])
+                claims.append(f"KARE {d['index']}: {ts or 'marka bilgisi yok'}")
+            if not frames:
+                continue
+            prompt = _VERIFY_PROMPT.format(claims="\n".join(claims))
+            parsed, err = verifier.analyze_frames(frames, prompt)
+            verify_budget_spend()
+            if err == "QUOTA_DAILY":
+                print("[DOĞRULAMA] sağlayıcı günlük kotası doldu — durduruldu")
+                break
+            if err or not isinstance(parsed, (list, dict)):
+                print(f"[DOĞRULAMA] batch hatası (atlandı): {err or 'parse'}")
+                continue
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            verdicts = {v.get("frame"): v for v in parsed if isinstance(v, dict)}
+            for d in chunk:
+                v = verdicts.get(d["index"])
+                if not v:
+                    continue
+                karar = (v.get("karar") or "").strip().lower()
+                notes = json.dumps({
+                    "provider": verifier.name, "model": verifier.model,
+                    "karar": karar, "neden": (v.get("neden") or "")[:200],
+                    "ts": datetime.utcnow().isoformat(),
+                }, ensure_ascii=False)
+                if karar == "reklam":
+                    update_detection_verify(video_id, d["index"], "confirmed", notes)
+                    confirmed += 1
+                elif karar == "tesadufi":
+                    update_detection_verify(video_id, d["index"], "rejected", notes,
+                                            guven="Düşük")
+                    rejected += 1
+                else:
+                    update_detection_verify(video_id, d["index"], "uncertain", notes)
+                    uncertain += 1
+
+        if rejected:
+            recompute_video_aggregates(video_id)
+        if confirmed or rejected or uncertain:
+            log_event("video", video_id, "ok", "verified",
+                      f"2. model ({verifier.name}): {confirmed} onay · "
+                      f"{rejected} ret · {uncertain} belirsiz")
+            print(f"[DOĞRULAMA] {video_id}: {confirmed} onay, {rejected} ret, "
+                  f"{uncertain} belirsiz")
+    except Exception as e:
+        print(f"[DOĞRULAMA] hata (birincil analiz etkilenmedi): {e}")

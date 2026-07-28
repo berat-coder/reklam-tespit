@@ -50,6 +50,9 @@ def config_endpoint():
         cfg = load_config()
         if "gemini_api_key" in data:
             cfg["gemini_api_key"] = data["gemini_api_key"]
+        for k in ("openrouter_api_key", "groq_api_key", "mistral_api_key"):
+            if k in data:
+                cfg[k] = (data[k] or "").strip()
         if "channels" in data:
             cfg["channels"] = data["channels"]
         if "global_ignored_brands" in data and isinstance(data["global_ignored_brands"], list):
@@ -72,6 +75,9 @@ def config_endpoint():
         return jsonify({"ok": True})
     cfg = load_config()
     key = cfg.get("gemini_api_key", "")
+    def _pv(k):
+        v = cfg.get(k, "") or ""
+        return (v[:6] + "..." + v[-4:]) if len(v) > 12 else ("var" if v else "")
     return jsonify({
         "has_key": bool(key),
         "key_preview": (key[:8] + "..." + key[-4:]) if len(key) > 12 else "",
@@ -79,6 +85,11 @@ def config_endpoint():
         "global_ignored_brands": cfg.get("global_ignored_brands", []),
         "excluded_placements": cfg.get("excluded_placements", []),
         "frame_retention": cfg.get("frame_retention", {"enabled": True, "days": 2}),
+        "verify_keys": {
+            "openrouter": _pv("openrouter_api_key"),
+            "groq": _pv("groq_api_key"),
+            "mistral": _pv("mistral_api_key"),
+        },
     })
 
 
@@ -346,12 +357,19 @@ def auto_scan_settings():
         for key in ("start", "end"):
             if key in data and isinstance(data[key], str) and ":" in data[key]:
                 cur[key] = data[key].strip()
-        for key in ("interval_min", "lookback_hours", "nightly_cap", "tz_offset"):
+        for key in ("interval_min", "day_interval_min", "lookback_hours",
+                    "daily_cap", "tz_offset", "live_recheck_min", "live_wait_ttl_hours"):
             if key in data:
                 try:
                     cur[key] = int(data[key])
                 except (TypeError, ValueError):
                     pass
+        # Eski UI 'nightly_cap' gönderiyorsa daily_cap'e yaz
+        if "nightly_cap" in data and "daily_cap" not in data:
+            try:
+                cur["daily_cap"] = int(data["nightly_cap"])
+            except (TypeError, ValueError):
+                pass
         if data.get("content_type") in ("all", "live", "video"):
             cur["content_type"] = data["content_type"]
         cfg["auto_scan"] = cur
@@ -907,6 +925,22 @@ def analyze_single_video():
 @api_bp.route("/api/live-video")
 def live_video():
     live = JOB_MANAGER.get_live_video()
+    # Bitmiş/hatalı analiz canlı sayfada sonsuza dek kalmasın: tamamlanan 60 sn
+    # ("✓ Tamamlandı" anı + sonuca git linki), hata 600 sn görünür kalır, sonra
+    # state temizlenir. finished_at damgasını job_manager._stamp_finished yazar.
+    if live and live.get("status") in ("completed", "error"):
+        grace = 60 if live["status"] == "completed" else 600
+        stale = True
+        ts = live.get("finished_at")
+        if ts:
+            try:
+                from datetime import datetime as _dt2, timedelta as _td2
+                stale = _dt2.fromisoformat(ts) < _dt2.utcnow() - _td2(seconds=grace)
+            except ValueError:
+                pass
+        if stale:
+            JOB_MANAGER.clear_live_video()
+            live = None
     if live is None:
         return jsonify({"active": False})
     return jsonify({"active": True, **live})
