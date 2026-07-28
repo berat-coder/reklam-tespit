@@ -84,7 +84,8 @@ def _require_login():
     # Ofis işçisi uçları oturum değil, paylaşılan gizli anahtar (X-Worker-Token)
     # ile doğrulanır — kendi kontrolleri routes/api.py içinde. Sabit token yoksa
     # o uçlar zaten 401 döner, yani burada geçirmek kapıyı açmaz.
-    if request.path in ("/api/worker/frame", "/api/worker/heartbeat"):
+    if (request.path in ("/api/worker/frame", "/api/worker/heartbeat")
+            or request.path.startswith("/api/worker/frame/")):
         return
     # Auth kapalıysa (local) herkes yönetici — geç.
     if not AUTH_ENABLED:

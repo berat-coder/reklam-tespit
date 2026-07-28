@@ -342,9 +342,6 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
         ad_brands = [nm for nm in frame_brands if not _is_excluded(nm)]
         ad_tespitler = [t for t in tespitler
                         if not _is_excluded(al(t.get("marka", "")))]
-        rep_turs = [_canonical_tur(t.get("tur", "")) for t in ad_tespitler]
-        rep_tur = rep_turs[0] if rep_turs else "Reklam"
-
         # Her marka için bu karedeki (tür, konum) çiftleri — active_only filtresiyle
         frame_kept = {}    # marka_key -> {"nm":.., "pairs":[(tur,konum)]} (SAYILAN)
         repeat_only = {}   # tekrar eden ürün-yerleştirme: sayılmaz, kanıt olarak eklenir
@@ -354,8 +351,17 @@ def compute_aggregates(detections, channel_logos, main_sponsors=None, active_onl
             if matched:
                 pairs = [(_canonical_tur(t.get("tur", "")), _norm(t.get("konum", ""))) for t in matched]
             else:
-                konum0 = _norm(ad_tespitler[0].get("konum", "")) if ad_tespitler else ""
-                pairs = [(rep_tur, konum0)]
+                # Tespiti olmayan marka: yalnız MARKASIZ (kolektif) tespitten tür miras
+                # alabilir. BAŞKA markanın tespitinden almak yanlış: Vodafone(Forma) +
+                # Cajun(tespitsiz) karesinde Cajun'a "Forma" atanıyordu — tersi durumda
+                # tespitsiz markaya sayılan bir tür atanıp hayalet sayım üretir.
+                anon = [t for t in ad_tespitler if not _norm(t.get("marka", ""))]
+                if anon:
+                    pairs = [(_canonical_tur(t.get("tur", "")), _norm(t.get("konum", ""))) for t in anon]
+                elif not ad_tespitler:
+                    pairs = [("Reklam", "")]   # karede hiç tespit yok → eski genel sayım
+                else:
+                    pairs = []                 # başka markanın tespiti var → miras yok
             # Yerleşim eleme: forma vb. dışlanan yerleşimler reklam sayılmaz
             pairs = [(t, k) for (t, k) in pairs if t not in excluded_pl]
             # ── Sayım baskılama (videoda BİR KEZ sayılanlar) ──

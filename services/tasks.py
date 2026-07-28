@@ -975,6 +975,26 @@ def process_verify_sync(job, _api_key, job_manager):
     _verify_video_core(job.get("video_id", ""))
 
 
+def _fetch_frame_from_web(video_id, fname, dest):
+    """Worker diski geçici (redeploy'da silinir) — kare lokalde yoksa panelden
+    (web) worker-token ile indir. Başarıysa dest'e yazar, True döner."""
+    base = os.environ.get("FRAME_UPLOAD_URL", "").strip().rstrip("/")
+    token = os.environ.get("WORKER_TOKEN", "").strip()
+    if not base or not token:
+        return False
+    try:
+        import requests
+        r = requests.get(f"{base}/api/worker/frame/{video_id}/{fname}",
+                         headers={"X-Worker-Token": token}, timeout=30)
+        if r.status_code == 200 and r.content:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(r.content)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 _VERIFY_PROMPT = """GÖREV: Aşağıdaki karelerde bir yapay zeka REKLAM tespit etti.
 Sen ikinci bir denetçisin. Her kare için soruyu yanıtla:
 
@@ -1046,8 +1066,10 @@ def _verify_video_core(video_id):
             for d in chunk:
                 fname = (d.get("frame_url") or "").rsplit("/", 1)[-1]
                 fpath = FRAMES_DIR / video_id / fname
-                if not fname or not fpath.exists():
+                if not fname:
                     continue
+                if not fpath.exists() and not _fetch_frame_from_web(video_id, fname, fpath):
+                    continue   # kare ne lokalde ne panelde — atla
                 frames.append({"index": d["index"], "b64": _b64_file(fpath)})
                 ts = "; ".join(
                     f"{t.get('marka') or '?'} ({t.get('tur') or '?'}, {t.get('konum') or '?'})"

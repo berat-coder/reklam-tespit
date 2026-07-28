@@ -3486,11 +3486,22 @@ function showFrameDetail(idx) {
       style="font-size:12px;color:var(--red);text-decoration:none;white-space:nowrap">
       <i class="ti ti-brand-youtube"></i> Bu anda YouTube'da aç</a>`;
   }
+  // Kayıt amaçlı (reklam SAYILMAYAN) yerleşimler — aggregates bunları sayıma katmaz.
+  // Kullanıcı "reklam saymış" sanmasın: kare yalnız bunlardan oluşuyorsa açıkça belirt.
+  const RECORD_ONLY = ['Forma', 'Basın Panosu', 'Satış Kanalı', 'Ürün Markası'];
+  const allRecordOnly = d.reklam_var && (d.tespitler || []).length > 0 &&
+    d.tespitler.every(t => RECORD_ONLY.includes(t.tur));
+  let statusLine;
+  if (!d.reklam_var) statusLine = 'Reklam yok';
+  else if (allRecordOnly) statusLine = '<span style="color:var(--amber)">Kayıt amaçlı tespit — reklam SAYILMADI (dışlanan yerleşim: ' + esc(d.tespitler.map(t => t.tur).join(', ')) + ')</span>';
+  else statusLine = d.guven + ' güven ile reklam';
+  if (d.verify_status === 'rejected') statusLine += ' · <span style="color:var(--amber)">2. model: tesadüfi görünüm (sayımdan düşürüldü)</span>';
+  else if (d.verify_status === 'confirmed') statusLine += ' · <span style="color:var(--green)">2. model onayladı</span>';
   let body = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
       <h2 style="font-size:16px;margin:0">Frame @ ${d.timestamp}</h2>${ytAt}
     </div>
-    <div style="color:var(--dim);font-size:12px;margin-bottom:10px">${d.reklam_var ? d.guven + ' güven ile reklam' : 'Reklam yok'}</div>
+    <div style="color:var(--dim);font-size:12px;margin-bottom:10px">${statusLine}</div>
     <img src="${d.frame_url}" style="width:100%;border-radius:8px;margin-bottom:10px">
     <div style="background:var(--bg3);border-radius:8px;padding:12px">
       <div style="font-size:12px;color:var(--dim);margin-bottom:4px">Özet</div>
@@ -3504,7 +3515,7 @@ function showFrameDetail(idx) {
     d.tespitler.forEach((t, i) => {
       body += `<div style="background:var(--bg2);border-radius:6px;padding:8px;margin-top:6px;font-size:12px;display:flex;justify-content:space-between;gap:8px">
         <div>
-          <strong>${esc(t.tur || '-')}</strong>
+          <strong>${esc(t.tur || '-')}</strong>${RECORD_ONLY.includes(t.tur) ? ' <span style="font-size:10px;color:var(--amber);border:1px solid var(--amber);border-radius:4px;padding:0 4px">sayılmaz</span>' : ''}
           ${t.marka ? ' · <span style="color:var(--accent)">' + esc(t.marka) + '</span>' : ''}
           ${t.konum ? '<div style="color:var(--dim);margin-top:2px">' + esc(t.konum) + '</div>' : ''}
           ${t.detay ? '<div style="margin-top:3px">' + esc(t.detay) + '</div>' : ''}

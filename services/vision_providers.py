@@ -108,10 +108,19 @@ _PROVIDERS = {
 
 
 def _provider_key(env_name, cfg_name, cfg=None):
-    """config.json (UI'dan girilen) env'i ezer — gemini_api_key ile aynı düzen."""
+    """Anahtar öncelik sırası: config.json (yalnız web'de var) → env → Postgres app_kv.
+    app_kv kritik: UI'dan girilen anahtar oraya da yazılır ve worker (ayrı servis,
+    ayrı disk) anahtarı ancak oradan görebilir."""
     if cfg and cfg.get(cfg_name):
         return cfg[cfg_name]
-    return os.environ.get(env_name, "").strip()
+    v = os.environ.get(env_name, "").strip()
+    if v:
+        return v
+    try:
+        from models.database import kv_get
+        return ((kv_get("verify_keys", {}) or {}).get(cfg_name) or "").strip()
+    except Exception:
+        return ""
 
 
 def get_verifier(cfg=None):

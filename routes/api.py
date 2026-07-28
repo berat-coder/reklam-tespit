@@ -50,9 +50,22 @@ def config_endpoint():
         cfg = load_config()
         if "gemini_api_key" in data:
             cfg["gemini_api_key"] = data["gemini_api_key"]
+        vk_updates = {}
         for k in ("openrouter_api_key", "groq_api_key", "mistral_api_key"):
             if k in data:
                 cfg[k] = (data[k] or "").strip()
+                vk_updates[k] = cfg[k]
+        if vk_updates:
+            # config.json yalnız WEB'in diskinde — worker AYRI serviste onu göremez.
+            # Doğrulama anahtarları iki tarafın ortak gördüğü Postgres'e (app_kv) yazılır.
+            from models.database import kv_get as _kvg, kv_set as _kvs
+            cur_keys = _kvg("verify_keys", {}) or {}
+            for k, v in vk_updates.items():
+                if v:
+                    cur_keys[k] = v
+                else:
+                    cur_keys.pop(k, None)
+            _kvs("verify_keys", cur_keys)
         if "channels" in data:
             cfg["channels"] = data["channels"]
         if "global_ignored_brands" in data and isinstance(data["global_ignored_brands"], list):
@@ -75,8 +88,10 @@ def config_endpoint():
         return jsonify({"ok": True})
     cfg = load_config()
     key = cfg.get("gemini_api_key", "")
+    from models.database import kv_get as _kvg
+    _vkeys = _kvg("verify_keys", {}) or {}
     def _pv(k):
-        v = cfg.get(k, "") or ""
+        v = cfg.get(k, "") or _vkeys.get(k, "") or ""
         return (v[:6] + "..." + v[-4:]) if len(v) > 12 else ("var" if v else "")
     return jsonify({
         "has_key": bool(key),
@@ -946,6 +961,17 @@ def live_video():
     return jsonify({"active": True, **live})
 
 
+@api_bp.route("/api/video/<video_id>/verify", methods=["POST"])
+def trigger_verify(video_id):
+    """Geriye dönük 2. model doğrulaması — analizi bitmiş bir videonun reklam
+    karelerini doğrulama kuyruğuna alır (anahtar sonradan eklendiyse kullanışlı)."""
+    v = get_video(video_id)
+    if not v:
+        return jsonify({"error": "Video bulunamadı"}), 404
+    job_id = JOB_MANAGER.add_verify(video_id)
+    return jsonify({"ok": True, "job_id": job_id})
+
+
 @api_bp.route("/api/queue")
 def queue_status():
     return jsonify(JOB_MANAGER.queue_status())
@@ -999,6 +1025,18 @@ def worker_upload_frame():
     d.mkdir(parents=True, exist_ok=True)
     f.save(str(d / name))
     return jsonify({"ok": True})
+
+
+@api_bp.route("/api/worker/frame/<video_id>/<filename>")
+def worker_download_frame(video_id, filename):
+    """İşçinin kanıt karesini geri indirmesi (2. model doğrulaması için) —
+    işçi diski geçici olduğundan redeploy sonrası kareler yalnız panelde durur."""
+    if not _worker_authed():
+        return jsonify({"error": "yetkisiz"}), 401
+    if not _VIDEO_ID_RE.match(video_id) or not _FRAME_NAME_RE.match(filename):
+        return jsonify({"error": "geçersiz istek"}), 400
+    from flask import send_from_directory
+    return send_from_directory(FRAMES_DIR / video_id, filename)
 
 
 @api_bp.route("/api/worker/heartbeat", methods=["POST"])
