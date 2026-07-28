@@ -532,9 +532,9 @@ def _analyze_video_core(
         # KÜÇÜLTÜLÜR (upscale değil) → metin keskin kalır. Bant genişliği artar
         # ama analiz normal internet bağlantısındaki işçide çalışıyor.
         if not si:
-            return None, 0
+            return None, 0, 0
         if si.get("url"):
-            return si["url"], 1
+            return si["url"], 1, si.get("height") or 0
         fmts = si.get("formats") or []
         cand = [f for f in fmts
                 if f.get("url") and f.get("vcodec") not in (None, "none")]
@@ -542,16 +542,16 @@ def _analyze_video_core(
             # DASH birleşik → video parçası
             for rf in (si.get("requested_formats") or []):
                 if rf.get("vcodec") not in (None, "none") and rf.get("url"):
-                    return rf["url"], len(fmts)
-            return None, len(fmts)
+                    return rf["url"], len(fmts), rf.get("height") or 0
+            return None, len(fmts), 0
         target = SOURCE_MIN_HEIGHT                 # hedef kaynak yüksekliği
         # Hedefe EN YAKIN ve hedeften küçük olmayan; yoksa mevcut en yükseği
         ge = [f for f in cand if (f.get("height") or 0) >= target]
         if ge:
             ge.sort(key=lambda f: ((f.get("height") or 0), -(f.get("tbr") or 0)))
-            return ge[0]["url"], len(fmts)
+            return ge[0]["url"], len(fmts), ge[0].get("height") or 0
         cand.sort(key=lambda f: (-(f.get("height") or 0), -(f.get("tbr") or 0)))
-        return cand[0]["url"], len(fmts)
+        return cand[0]["url"], len(fmts), cand[0].get("height") or 0
 
     class _YdlLog:
         """yt-dlp'nin uyarılarını yakalar. Asıl ret sebebi (bot kontrolü,
@@ -590,9 +590,15 @@ def _analyze_video_core(
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
-            stream_url, nfmt = _pick_stream_url(si)
+            stream_url, nfmt, sheight = _pick_stream_url(si)
             if stream_url:
-                status(f"Stream OK (client={cname}, format sayısı={nfmt})")
+                # Seçilen KAYNAK çözünürlüğü loglanır: köşe logolarının marka
+                # yazısının okunabilmesi buna bağlı (düşükse tespit tahmine döner)
+                status(f"Stream OK (client={cname}, kaynak={sheight or '?'}p, "
+                       f"format sayısı={nfmt})")
+                if sheight and sheight < SOURCE_MIN_HEIGHT:
+                    status(f"UYARI: kaynak yalnız {sheight}p — küçük marka "
+                           f"yazıları okunamayabilir (hedef {SOURCE_MIN_HEIGHT}p)")
                 break
             # Teşhis: video formatı var ama URL'i mi yok (SABR), yoksa hiç mi yok?
             fmts = (si or {}).get("formats") or []
@@ -746,8 +752,7 @@ def _analyze_video_core(
         prompt_logos = list(dict.fromkeys(
             ([channel_name] if channel_name else []) + channel_logos))
         batch_res = gemini_analyze_batch(api_key, batch_frames,
-                                          prompt_logos, desc_brands,
-                                          main_sponsors=main_sponsors)
+                                          prompt_logos, desc_brands)
         # ── Günlük kota (RPD) doldu mu? Saatlerce 429 beklemek yerine HIZLI dur ──
         if any((r or {}).get("ozet") == "QUOTA_DAILY" for r in batch_res.values()):
             status("Gemini GÜNLÜK kota doldu — analiz durduruldu, yarın devam")

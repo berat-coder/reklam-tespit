@@ -185,6 +185,11 @@ def _detection_rules(channel_logos):
   FARKLI bir marka/sponsor logosu varsa onu MUTLAKA ayrı tespit olarak YAZ
   (ör. sol üstte kanal logosu + sağ üstte sponsor markası → sadece sponsoru yaz)
 - Her köşeyi ayrı değerlendir; bir köşedeki kanal logosu diğer köşedeki reklamı gölgelemesin
+- KALICI LOGO ↔ SPOT REKLAM ayrımı (kanaldan bağımsız genel kural): yayın
+  boyunca bir köşede sabit duran sponsor logosu için tur="Köşe Banner";
+  kısa süreli görünen alt bant / tam ekran / ürün tanıtımı için o türü yaz.
+  Hangi markanın sabit olduğu SANA SÖYLENMEZ — her yayının sponsoru farklı
+  olabilir, sadece o karede GÖRDÜĞÜNÜ değerlendir.
 - Markayı NET okuyabiliyorsan YAZ, emin değilsen boş bırak
 - EMİN DEĞİLSEN guven="Düşük" ver. Tahmin yürütme; okuyamadığın bir logoyu
   "olabilir" diye yazma. Yanlış marka yazmak, hiç yazmamaktan kötüdür.
@@ -273,11 +278,10 @@ def _empty_result(ozet="", skipped=False):
 
 
 def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
-                         main_sponsors=None):
+                         ):
     """
     Birden fazla frame'i TEK Gemini çağrısında analiz eder.
     frames: [{"index": int, "timestamp": str, "b64": str}, ...]
-    main_sponsors: kanalın bilinen ana sponsorları → prompt'a bağlam enjekte
     edilir (kalıcı logo ↔ spot reklam ayrımı netleşir).
     Döner: {index: result_dict} — eksik index'ler _skipped fallback alır.
     """
@@ -287,23 +291,15 @@ def gemini_analyze_batch(api_key, frames, channel_logos, known_brands,
     ctx = ""
     if channel_logos:
         ctx += f"\n🚫 KANALIN KENDİ LOGOLARI (REKLAM SAYMA): {', '.join(channel_logos[:10])}"
-    if main_sponsors:
-        # DİKKAT — burada sponsor ADI KASITLI OLARAK verilmiyor.
-        # Önceden "Bu kanalın RESMİ ANA SPONSORU: X" yazıyordu ve bu bir
-        # ONAY YANLILIĞI (confirmation bias) döngüsü yaratıyordu: düşük
-        # çözünürlükte bir kez yanlış okunan marka (Migros Hemen → n11)
-        # otomatik ana sponsor kaydediliyor, sonraki taramalarda prompt modele
-        # o adı söylüyor, model de köşedeki logoyu YÜKSEK GÜVENLE o marka ilan
-        # edip gerekçe uyduruyordu — hata kalıcılaşıyordu.
-        # Türü doğru sınıflandırmak için markanın adını bilmek GEREKMEZ;
-        # yalnız "kalıcı logo" davranışını tarif etmek yeterli.
-        ctx += ("\n🏆 BAĞLAM: Bu kanalda yayın boyunca ekranda SÜREKLİ duran "
-                "sabit bir sponsor logosu bulunuyor. Böyle bir logo görürsen "
-                "türünü doğru ver: sabit köşe logosu ise tur='Köşe Banner'; "
-                "kısa süreli spot reklam (alt bant, tam ekran, ürün tanıtımı) "
-                "ise o türü yaz. Kalıcı logoyu spot reklamla KARIŞTIRMA. "
-                "Markanın ADINI kendin OKU — sana marka adı verilmiyor, "
-                "tahmin etme, okuyamıyorsan boş bırak ve guven='Düşük' ver.")
+    # KANAL BAZLI SPONSOR BAĞLAMI YOK — kasıtlı.
+    # Her kanalın, hatta aynı kanalın her PROGRAMININ/yayınının sponsoru farklı
+    # olabiliyor. Prompt'a kanal düzeyinde "şu marka bu kanalın sponsoru" bilgisi
+    # koymak (a) yayından yayına yanlış genelleme, (b) onay yanlılığı döngüsü
+    # üretiyordu: yanlış okunan bir marka kurala dönüşüp modele geri besleniyor,
+    # model de hatayı yüksek güvenle tekrarlıyordu (Migros Hemen → n11 → Misli).
+    # Kalıcı logo ayrımı için kanal bilgisine ihtiyaç yok: sınıflandırma kuralı
+    # _detection_rules içinde kanal-bağımsız olarak veriliyor, kalıcılık ise
+    # sayım aşamasında (compute_aggregates) VİDEO BAZINDA ölçülüyor.
     if known_brands:
         # Bu liste yalnız İPUCU. Priming riski var: model listedeki markayı
         # görmediği karede de yazabiliyordu → açık uyarı ekleniyor.
