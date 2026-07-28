@@ -4,6 +4,7 @@ RQ worker'lardan (process_video_rq / process_channel_scan_rq)
 ve thread worker'lardan (process_video_sync / process_channel_scan_sync) çağrılır.
 """
 
+import os
 import re
 import time
 import base64
@@ -94,11 +95,21 @@ def _b64_file(path):
 
 # ── Frame çıkarımı ──────────────────────────────────────────────────────────────
 
+def _ffmpeg_proxy_args():
+    """YouTube stream URL'leri, onları ÜRETEN IP'ye kilitlidir. yt-dlp URL'i
+    YT_PROXY üzerinden aldıysa ffmpeg de AYNI proxy'den indirmek zorunda —
+    yoksa googlevideo 403 döner. `-http_proxy` bir girdi (protokol) seçeneğidir,
+    `-i`'den ÖNCE gelmeli."""
+    proxy = os.environ.get("YT_PROXY", "").strip()
+    return ["-http_proxy", proxy] if proxy else []
+
+
 def _ffmpeg_seek_frame(stream_url, out_path, t, width):
     """Tek bir zaman noktasından `-ss` (input seek = HTTP range) ile 1 frame çeker.
     Tüm videoyu indirmez — sadece o anın etrafındaki birkaç KB'ı indirir."""
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error",
+        *_ffmpeg_proxy_args(),
         "-ss", str(t), "-i", stream_url,
         "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4",
         "-y", str(out_path),
@@ -116,6 +127,7 @@ def _extract_frames_ffmpeg_linear(stream_url, frames_dir, interval, width,
     """Süre bilinmiyorsa (ör. canlı yayın) yedek: tek geçiş fps filtresiyle çıkarır."""
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error", "-an",
+        *_ffmpeg_proxy_args(),
         "-i", stream_url,
         "-vf", f"fps=1/{interval},scale={width}:-2",
         "-q:v", "4",
