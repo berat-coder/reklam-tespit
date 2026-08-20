@@ -1,8 +1,21 @@
 flask==3.0.3
-yt-dlp
+# yt-dlp SÜRÜMÜ SABİT — ve DÜZENLİ GÜNCELLENMESİ GEREKİR.
+# YouTube oynatıcı/anti-bot tarafını ayda birkaç kez değiştiriyor; yt-dlp günler
+# içinde yama çıkarıyor. SABİTLENMEZSE imaj yeniden derlenmedikçe eski sürüm
+# konteynerde kalır ve tespit TAMAMEN durur — üstelik düz "Redeploy" de yetmez,
+# çünkü pip katmanı önbellekte ve requirements.txt değişmedikçe yeniden çalışmaz.
+# YAŞANAN OLAY: imaj 28 Temmuz'da 2026.07.04 ile derlendi → YouTube 17-18
+# Ağustos'ta değişti → 18 Ağustos'tan itibaren 40 denemede 0 başarı
+# ("No title found in player responses", sıfır format) → yt-dlp düzeltmesi
+# 19 Ağustos'ta 2026.8.19 olarak çıktı.
+# TESPİT DURURSA İLK BAKILACAK YER BURASI: en yeni sürüme yükselt.
+yt-dlp==2026.8.19
 # YouTube PO Token eklentisi — datacenter IP'lerinde (Railway) video formatı
 # çekebilmek için gerekli. Token'ları YT_POT_BASE_URL'deki bgutil servisinden alır.
-bgutil-ytdlp-pot-provider
+# Eklenti sürümü, çalışan bgutil SUNUCU imajıyla aynı olmalı (şu an v1.3.1);
+# uyumsuzlukta PO token sessizce reddedilir. Serbest bırakmak yeniden derlemede
+# uyumsuz sürüm getirebilir.
+bgutil-ytdlp-pot-provider==1.3.1
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 requests==2.32.3
