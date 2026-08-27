@@ -19,6 +19,7 @@ Ofis makinesinde gerekli ortam değişkenleri (.env dosyasına yazılabilir):
 """
 
 import os
+import platform
 import socket
 import threading
 
@@ -33,7 +34,7 @@ TOKEN = os.environ.get("WORKER_TOKEN", "").strip()
 HEARTBEAT_SECONDS = 30
 
 from redis import Redis
-from rq import Worker, Queue
+from rq import Worker, SimpleWorker, Queue
 
 conn = Redis.from_url(REDIS_URL)
 
@@ -63,7 +64,21 @@ if __name__ == "__main__":
               "kanıt kareleri panele yüklenmeyecek")
 
     queues = [Queue(connection=conn)]
-    worker = Worker(queues, connection=conn)
+    # macOS'ta RQ'nun varsayılan (fork'lu) işçisi ÇÖKÜYOR: iş, os.fork ile
+    # ayrı bir "work-horse" sürecinde çalışıyor ve fork sonrası OpenCV /
+    # Objective-C runtime kullanımı signal 11 (SIGSEGV) veriyor
+    # ("Work-horse terminated unexpectedly; waitpid returned 11").
+    # SimpleWorker fork ETMEZ, işi aynı süreçte çalıştırır → macOS'ta çalışır.
+    # Linux'ta (Railway/ofis sunucusu) varsayılan işçi korunur; WORKER_SIMPLE
+    # ile elle zorlanabilir.
+    simple = (os.environ.get("WORKER_SIMPLE", "").strip().lower()
+              in ("1", "true", "yes", "on")) or platform.system() == "Darwin"
+    if simple:
+        os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+        print("[WORKER] SimpleWorker (fork yok — macOS uyumu)")
+        worker = SimpleWorker(queues, connection=conn)
+    else:
+        worker = Worker(queues, connection=conn)
     print(f"[WORKER] Redis: {REDIS_URL.split('@')[-1]}")
     print("[WORKER] iş bekleniyor...")
     worker.work(with_scheduler=True)

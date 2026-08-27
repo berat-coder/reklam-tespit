@@ -141,6 +141,13 @@ FRAME_SEEK_RW_TIMEOUT_SEC = _int_env("FRAME_SEEK_RW_TIMEOUT_SEC", 15)
 # Eskiden 3'tü; 2. model doğrulaması geldiği için 6'ya çıkarıldı — doğrulayıcının
 # inceleyebileceği daha çok kanıt kalır, gürültüyü zaten doğrulayıcı eler.
 BRAND_TUR_FRAME_CAP = _int_env("BRAND_TUR_FRAME_CAP", 6)
+# OpenCV yedek kare çıkarımı için TOPLAM süre sınırı (sn).
+# Neden var: ffmpeg 0 kare döndürdüğünde kod OpenCV yedeğine düşüyor ve
+# cv2.VideoCapture canlı bir HLS akışına zaman aşımı olmadan bağlanmaya
+# çalışıp SÜRESİZ bekliyordu. IP bloğu yüzünden ffmpeg sürekli 0 döndürünce
+# her iş buraya düşüp TEK işçi slotunu sonsuza dek kilitliyordu → kuyruk
+# tıkanıyor, hiçbir tarama bitmiyordu. Bu sınır kilitlenmeyi imkânsız kılar.
+OPENCV_FALLBACK_TIMEOUT = _int_env("OPENCV_FALLBACK_TIMEOUT", 120)
 
 # Spor yayınlarında REKLAM SAYILMAYACAK kulüp/lig/federasyon/milli takım adları.
 # Forma/saha SPONSOR markaları (bahis, banka, telekom) bundan etkilenmez — onlar

@@ -23,6 +23,7 @@ from config import (
     TARGET_SAMPLE_FRAMES, MAX_API_FRAMES,
     FRAME_SEEK_WORKERS, FRAME_SEEK_TIMEOUT, FRAME_SEEK_FAST,
     FRAME_SEEK_RW_TIMEOUT_SEC, BRAND_TUR_FRAME_CAP,
+    OPENCV_FALLBACK_TIMEOUT,
 )
 from services import frame_sync
 from services.gemini import gemini_analyze_batch, gemini_extract_brands
@@ -231,9 +232,31 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
     return [r for r in results if r]
 
 
-def _extract_frames_opencv(stream_url, frames_dir, interval, width):
-    """ffmpeg yoksa yedek: OpenCV ile seek ederek frame çıkarır."""
-    cap = cv2.VideoCapture(stream_url)
+def _extract_frames_opencv(stream_url, frames_dir, interval, width,
+                           cancel_check=None, deadline_sec=OPENCV_FALLBACK_TIMEOUT):
+    """ffmpeg yoksa/0 kare döndürdüyse yedek: OpenCV ile seek ederek kare çıkarır.
+
+    DİKKAT — bu yol daha önce ÜRETİMİ KİLİTLİYORDU: cv2.VideoCapture canlı bir
+    HLS akışına zaman aşımı OLMADAN bağlanmaya çalışıyor ve süresiz bekliyordu.
+    ffmpeg (IP bloğu yüzünden) 0 kare döndürdüğünde her iş buraya düşüp tek
+    işçi slotunu sonsuza dek işgal ediyordu → kuyruk tıkanıyor, "hiçbir tarama
+    başarılı olmuyor". Artık: açılış/okuma zaman aşımı + toplam süre sınırı +
+    iptal kontrolü var; süre dolarsa elde ne varsa onunla döner."""
+    import time as _t
+    start = _t.monotonic()
+    # FFMPEG backend'i açılış/okuma zaman aşımını destekler (ms). Eski OpenCV
+    # sürümlerinde sabitler olmayabilir → varsa uygula.
+    params = []
+    for name, val in (("CAP_PROP_OPEN_TIMEOUT_MSEC", 15000),
+                      ("CAP_PROP_READ_TIMEOUT_MSEC", 15000)):
+        pid = getattr(cv2, name, None)
+        if pid is not None:
+            params += [int(pid), int(val)]
+    try:
+        cap = (cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG, params) if params
+               else cv2.VideoCapture(stream_url))
+    except Exception:
+        cap = cv2.VideoCapture(stream_url)
     if not cap.isOpened():
         return []
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
@@ -241,6 +264,13 @@ def _extract_frames_opencv(stream_url, frames_dir, interval, width):
     out = []
     current, n = 0, 0
     while True:
+        # Süre sınırı ve iptal — biri devreye girerse elde olanla dön
+        if _t.monotonic() - start > deadline_sec:
+            print(f"[VIDEO] opencv yedeği {deadline_sec}sn sınırına takıldı "
+                  f"({n} kare) — işçi kilitlenmesin diye bırakılıyor")
+            break
+        if cancel_check and cancel_check():
+            break
         cap.set(cv2.CAP_PROP_POS_FRAMES, current)
         ret, frame = cap.read()
         if not ret:
@@ -273,7 +303,8 @@ def _extract_frames(stream_url, frames_dir, interval, width, duration=0,
             print("[VIDEO] ffmpeg 0 frame döndü, opencv'ye düşülüyor")
         except Exception as e:
             print(f"[VIDEO] ffmpeg başarısız ({e}), opencv'ye düşülüyor")
-    return _extract_frames_opencv(stream_url, frames_dir, interval, width)
+    return _extract_frames_opencv(stream_url, frames_dir, interval, width,
+                                  cancel_check=cancel_check)
 
 
 def _select_candidates(frames_data):
