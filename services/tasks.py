@@ -678,8 +678,18 @@ def _analyze_video_core(
     stream_url = None
     _last_err = None
     _diag = []          # her client'ın sonucu — hepsi tek mesajda gösterilir
-    for _clients in (["tv"], ["web_safari"], ["web"], ["mweb"],
-                     ["ios"], ["android_vr"], ["tv_embedded"]):
+    # CLIENT SIRASI — ölçüme göre (yt-dlp 2026.8.19 + deno/EJS ile):
+    #   web_safari → TAM DASH [144…1080], PO token'a bile gerek yok  ← kazanan
+    #   mweb, tv_simply → çalışır ama GVS PO token ister (bgutil verebilir)
+    #   web → YouTube SABR zorluyor, çoğu zaman yalnız 360p (yt-dlp#12482)
+    #   android_vr → JS gerektirmez ama DASH'i bgutil'den token ALAMAZ (yapısal:
+    #                eklentinin _SUPPORTED_CLIENTS listesi yalnız WebPO client'ları)
+    #                → tek 360p progressive; son çare olarak sonda
+    #   tv → bu sürümde her koşulda "The page needs to be reloaded" veriyor
+    # NOT: "tv_embedded" bu yt-dlp sürümünün INNERTUBE_CLIENTS'ında YOK — ölü
+    # kayıttı, boşa bir tur döndürüyordu; çıkarıldı.
+    for _clients in (["web_safari"], ["mweb"], ["tv_simply"], ["web"],
+                     ["ios"], ["tv"], ["android_vr"]):
         cname = _clients[0]
         log = _YdlLog()
         try:

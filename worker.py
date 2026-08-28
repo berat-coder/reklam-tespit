@@ -28,13 +28,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+# REDIS_URL YOKSA localhost'a düşmek TEHLİKELİ: Railway'de böyle bir Redis yok,
+# süreç boot'ta "Error 111 connecting to localhost:6379" ile çöküyor, platform
+# yeniden başlatıyor ve sonsuz ÇÖKME DÖNGÜSÜ oluşuyor (6 saatte 11+ restart
+# gözlendi). Loglar traceback'le doluyor, gerçek sorun görünmez oluyor.
+# Artık: değişken yoksa net mesaj + temiz çıkış (restart döngüsü yok).
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 UPLOAD_URL = os.environ.get("FRAME_UPLOAD_URL", "").strip().rstrip("/")
 TOKEN = os.environ.get("WORKER_TOKEN", "").strip()
 HEARTBEAT_SECONDS = 30
 
 from redis import Redis
 from rq import Worker, SimpleWorker, Queue
+
+if not REDIS_URL:
+    print("[WORKER] HATA: REDIS_URL tanımlı değil — işçi kuyruğa bağlanamaz.\n"
+          "         Railway'de worker servisine REDIS_URL ekleyin\n"
+          "         (Redis servisinin REDIS_URL'ü), yerelde .env'e yazın.")
+    raise SystemExit(1)
 
 conn = Redis.from_url(REDIS_URL)
 
