@@ -50,7 +50,13 @@ def _is_real_completion(frame_count, duration):
         return False
     if d <= 0:                      # süre bilinmiyor (canlı) → 3 kare yeter
         return f >= 3
-    expected = max(1.0, d / max(1, FRAME_INTERVAL))
+    # Beklenen kare sayısı, çıkarıcının GERÇEK aralığıyla hesaplanmalı.
+    # Aralık TARGET_SAMPLE_FRAMES'e göre büyütülüyor (tasks.py:852): uzun
+    # videoda 8 sn değil, ör. 2 saatlik yayında ~35 sn. Sabit 8 varsaymak
+    # beklenen kareyi 4-5 KAT şişirir ve BAŞARILI analizleri "eksik" sayıp
+    # sonsuza dek yeniden taratır (kota israfı).
+    interval = max(FRAME_INTERVAL, -(-int(d) // max(1, TARGET_SAMPLE_FRAMES)))
+    expected = max(1.0, d / interval)
     return f >= max(3, int(expected * 0.10))
 
 
