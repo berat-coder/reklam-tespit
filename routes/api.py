@@ -372,11 +372,21 @@ def auto_scan_settings():
         for key in ("start", "end"):
             if key in data and isinstance(data[key], str) and ":" in data[key]:
                 cur[key] = data[key].strip()
+        # ALT SINIRLAR: interval_min/day_interval_min için taban yoktu; UI'dan
+        # 1 (veya 0 → max(1,0)=1) yazılabiliyordu. Üretimde zamanlayıcı
+        # ~85 saniyede bir tüm kanalları tarıyordu (14 dakikada 12 tam geçiş,
+        # 13 kanal × 3 yt-dlp sorgusu) → YouTube'a sürekli yük + scan_log
+        # 30 dakikada doluyor ve manuel tarama kaydı siliniyor.
+        _MIN = {"interval_min": 5, "day_interval_min": 5, "live_recheck_min": 5,
+                "lookback_hours": 1, "daily_cap": 1, "live_wait_ttl_hours": 1}
         for key in ("interval_min", "day_interval_min", "lookback_hours",
                     "daily_cap", "tz_offset", "live_recheck_min", "live_wait_ttl_hours"):
             if key in data:
                 try:
-                    cur[key] = int(data[key])
+                    v = int(data[key])
+                    if key in _MIN:
+                        v = max(_MIN[key], v)
+                    cur[key] = v
                 except (TypeError, ValueError):
                     pass
         # Eski UI 'nightly_cap' gönderiyorsa daily_cap'e yaz
@@ -896,9 +906,41 @@ def scan_channel():
     hours = int(data.get("hours", 24))
     if not url:
         return jsonify({"error": "URL gerekli"}), 400
+    # VIDEO URL'i KANAL TARAMASINA GİRMESİN. Doğrulama yoktu; kullanıcı video
+    # linki yapıştırınca kod ona /videos, /streams, /live ekleyip YouTube'a
+    # soruyordu ("Çekiliyor: .../watch?v=XXX/videos → boş") ve sonuç sessizce
+    # 0 oluyordu. /api/analyze/video bu kontrolü zaten yapıyor.
+    if re.search(r"[?&]v=|youtu\.be/|/shorts/", url):
+        return jsonify({
+            "error": "Bu bir VİDEO linki, kanal linki değil. Tek video için "
+                     "'Manuel Analiz' alanını kullanın.",
+            "is_video_url": True,
+        }), 400
     job_id = JOB_MANAGER.add_channel_scan(url, last_hours=hours,
                                           content_type=_content_type(data))
     return jsonify({"ok": True, "job_id": job_id})
+
+
+@api_bp.route("/api/job/<job_id>")
+def job_status(job_id):
+    """Bir kuyruk işinin durumu ve SONUCU. UI kanal taramasını buradan
+    izliyor: eskiden yalnız "Tarama başladı" deniyor, iş bittiğinde
+    "0 yeni video" sonucu kullanıcıya HİÇ ulaşmıyordu."""
+    from services.job_manager import USE_REDIS, _redis
+    if not USE_REDIS or _redis is None:
+        return jsonify({"status": "unknown", "reason": "queue_not_redis"})
+    try:
+        from rq.job import Job
+        j = Job.fetch(job_id, connection=_redis)
+    except Exception:
+        return jsonify({"status": "not_found"})
+    st = j.get_status()
+    out = {"status": st, "job_id": job_id}
+    if st == "finished":
+        out["result"] = j.result if isinstance(j.result, dict) else None
+    elif st == "failed":
+        out["error"] = (str(j.exc_info or "")[-300:]) or "bilinmeyen hata"
+    return jsonify(out)
 
 
 @api_bp.route("/api/scan/all", methods=["POST"])

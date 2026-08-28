@@ -36,6 +36,24 @@ from models.database import (
 )
 
 
+
+def _is_real_completion(frame_count, duration):
+    """Analiz gerçekten tamamlandı mı? Kare çıkarımı çökmüşse (ör. 2 saatlik
+    videodan 1 kare) bunu 'tamamlandı' saymak videoyu kalıcı olarak görünmez
+    yapar. Eşik: beklenen karenin ~%10'u, en az 3 kare."""
+    try:
+        d = float(duration or 0)
+        f = int(frame_count or 0)
+    except (TypeError, ValueError):
+        return False
+    if f <= 0:
+        return False
+    if d <= 0:                      # süre bilinmiyor (canlı) → 3 kare yeter
+        return f >= 3
+    expected = max(1.0, d / max(1, FRAME_INTERVAL))
+    return f >= max(3, int(expected * 0.10))
+
+
 def _vid_from_url(url):
     """watch?v=ID / youtu.be/ID / shorts/ID → video id (hata anında atıf için)."""
     if not url:
@@ -398,7 +416,7 @@ def _cap_candidates(candidate_indices, rep_of, max_n):
 def process_channel_scan_rq(channel_url, last_hours=24, content_type="all"):
     """RQ worker'dan çağrılır. Kanalı tarayıp videoları sıraya ekler."""
     from services.job_manager import JOB_MANAGER
-    _do_channel_scan(channel_url, last_hours, JOB_MANAGER, content_type)
+    return _do_channel_scan(channel_url, last_hours, JOB_MANAGER, content_type)
 
 
 def process_channel_scan_sync(job, _api_key, job_manager):
@@ -428,7 +446,7 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
         print(f"[KANAL-TARAMA] Hata: {e}")
         code, _ = _classify_error(str(e))
         log_event("channel_scan", channel_url, "error", code, str(e))
-        return
+        return {"ok": False, "error": str(e)[:200], "found": 0, "queued": 0}
 
     channel_id = channel_id_from_url(channel_url)
     channel_name = res["channel_name"] or channel_id
@@ -475,6 +493,13 @@ def _do_channel_scan(channel_url, last_hours, job_manager, content_type="all"):
     print(f"[KANAL-TARAMA] {channel_name}: {added} yeni video sıraya alındı{wait_note}")
     log_event("channel_scan", channel_name, "ok", "success",
               f"{added} yeni video sıraya alındı ({len(res['videos'])} bulundu){wait_note}")
+    # SONUCU DÖNDÜR: RQ bunu işin result'ına yazar, /api/job/<id> okur ve UI
+    # gerçek sonucu gösterir. Eskiden UI yalnız "Tarama başladı" diyordu; iş
+    # 6 saniye sonra "0 yeni video" ile bitiyor ama kullanıcıya HİÇBİR bildirim
+    # gitmiyordu → "sistem tarama yapmıyor" algısının başlıca sebebi buydu.
+    return {"ok": True, "channel": channel_name, "found": len(res["videos"]),
+            "queued": added, "waiting": waiting,
+            "content_type": content_type, "hours": last_hours}
 
 
 # ── Video analizi ─────────────────────────────────────────────────────────────
@@ -1008,8 +1033,17 @@ def _analyze_video_core(
         persistent_overlays=agg["persistent_overlays"],
         brand_exposure=_exposure_map(agg),   # süre/olay → panel, trend, EMV
         desc_brands=desc_brands,
-        completed=True,
-        is_partial=is_partial,
+        # ── "TAMAMLANDI" YALANI ──
+        # Eskiden completed=True KOŞULSUZ yazılıyordu. Kare çıkarımı başarısız
+        # olsa bile (2 saatlik videoda 1 kare) kayıt "tamamlandı" sayılıyor ve
+        # is_video_completed onu KALICI olarak eliyordu → kullanıcı o kanalı
+        # tekrar taradığında video bir daha ASLA sıraya girmiyordu.
+        # Üretimde bu şekilde 16 çöp kayıt oluşmuştu; kullanıcının "kanal
+        # taraması hiçbir şey yapmıyor" şikayetinin sebeplerinden biri buydu.
+        # Artık: beklenenin çok altında kare çıktıysa tamamlanmış SAYILMAZ,
+        # bir sonraki taramada yeniden denenir.
+        completed=_is_real_completion(analyzed, duration),
+        is_partial=is_partial or not _is_real_completion(analyzed, duration),
     )
 
     # TÜM kareler diskte kalır (kullanıcı temiz kareleri de inceleyebilsin —

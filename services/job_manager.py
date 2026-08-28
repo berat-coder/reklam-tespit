@@ -393,7 +393,10 @@ class JobManager:
             try:
                 cfg = load_config()
                 api_key = cfg.get("gemini_api_key", "")
-                if not api_key:
+                # API key YALNIZ video analizi için gerekir. Kanal taraması
+                # Gemini kullanmaz ama bu kontrole takılıp iş SESSİZCE
+                # kuyruktan düşüyordu (pop edilmiş, sonra continue).
+                if job.get("type") == "video" and not api_key:
                     self._status = "error"
                     self._message = "API key yok"
                     continue

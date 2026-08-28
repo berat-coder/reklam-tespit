@@ -446,11 +446,27 @@ def get_scan_log(limit=100):
         return [dict(r) for r in rows]
 
 
-def purge_scan_log(keep=300):
+def purge_scan_log(keep=300, keep_discover=60):
+    """scan_log budaması — TÜRE DUYARLI.
+
+    Eskiden düz "son N satırı tut" idi. Zamanlayıcının ürettiği 'discover'
+    satırları (her tick × her kanal) logu sel gibi doldurduğu için kullanıcının
+    MANUEL tarama sonucu 30 dakikada siliniyordu; "Durum" sayfasına baksa bile
+    göremiyordu. Artık gürültülü 'discover' ayrı ve agresif budanır, anlamlı
+    kayıtlar (kanal taraması, video analizi, hatalar) korunur."""
     with get_db() as conn:
+        # 1) Gürültü: yalnız son `keep_discover` discover satırı kalsın
         conn.execute("""
-            DELETE FROM scan_log WHERE id NOT IN (
-                SELECT id FROM scan_log ORDER BY id DESC LIMIT ?
+            DELETE FROM scan_log WHERE kind = 'discover' AND id NOT IN (
+                SELECT id FROM scan_log WHERE kind = 'discover'
+                ORDER BY id DESC LIMIT ?
+            )
+        """, (keep_discover,))
+        # 2) Anlamlı kayıtlar: kendi içinde son `keep` satır
+        conn.execute("""
+            DELETE FROM scan_log WHERE kind != 'discover' AND id NOT IN (
+                SELECT id FROM scan_log WHERE kind != 'discover'
+                ORDER BY id DESC LIMIT ?
             )
         """, (keep,))
 

@@ -120,6 +120,22 @@ _META_CACHE = {}
 _META_CACHE_MAX = 3000
 
 
+def _playlist_depth(last_hours):
+    """Kanal listesinden kaç video çekilecek — pencere ne kadar genişse o kadar
+    derin. Sabit 20 iken "son 1 hafta" son 20 videodan derine inemiyordu."""
+    try:
+        h = int(last_hours or 0)
+    except (TypeError, ValueError):
+        h = 0
+    if h <= 0:
+        return 40
+    if h <= 24:
+        return 20
+    if h <= 24 * 7:
+        return 60
+    return 120
+
+
 def _resolve_video_meta(url):
     """Tek videonun gerçek (tarih, durum)'unu çöz — flat çıktı tarih/durum
     vermediği için. Döner: (epoch_ts_or_None, live_status).
@@ -320,7 +336,10 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all", tabs=No
             with YoutubeDL(get_ydl_opts({
                 "extract_flat": "in_playlist",
                 "skip_download": True,
-                "playlistend": 20,
+                # Pencereye göre ölçekle: sabit 20'de "son 1 hafta" hiçbir zaman
+                # son 20 videodan derine inemiyordu (24 saat ile aynı sonucu
+                # veriyordu). Uzun pencere → daha derin liste.
+                "playlistend": _playlist_depth(last_hours),
                 "ignoreerrors": True,
                 "socket_timeout": 15,
                 # Kanal listesi için web client daha güvenilir
@@ -393,7 +412,13 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all", tabs=No
                 from config import SHORTS_MAX_DURATION
                 if "/shorts/" in _url or (0 < _dur <= SHORTS_MAX_DURATION):
                     continue
-                is_live = bool(entry.get("is_live") or entry.get("was_live"))
+                # Flat listede is_live/was_live HER ZAMAN None; dolu olan alan
+                # live_status. Eski kod bu yüzden ŞU AN YAYINDA olan bir yayını
+                # "canlı değil" sayıp, "yayın bitene kadar bekle" korumasını
+                # atlatıyor ve canlı yayının ortasında tam analize gönderiyordu
+                # (1 karelik çöp kayıtların bir kısmının sebebi bu).
+                _ls = entry.get("live_status")
+                is_live = (_ls == "is_live") or bool(entry.get("is_live"))
                 all_entries[eid] = {
                     "id": eid,
                     "url": entry.get("url") or f"https://www.youtube.com/watch?v={eid}",
@@ -436,12 +461,38 @@ def fetch_channel_videos(channel_url, last_hours=24, content_type="all", tabs=No
     import time as _time
     now = int(_time.time())
 
-    # Zaman penceresi filtresi (last_hours>0). Zaman damgası BİLİNMEYEN entry'ler
-    # ATILMAZ — kaçırmamak için tutulur (flat extraction her zaman tarih vermez).
+    # ── ZAMAN PENCERESİ — GERÇEKTEN UYGULANIYOR ──
+    # ÖNCEDEN BOZUKTU: flat çıktıda timestamp HER ZAMAN None geliyor, filtre de
+    # "tarihi yoksa tut" dediği için hiçbir şey elenmiyordu → "Son 24 saat" ile
+    # "Son 1 hafta" BİREBİR aynı sonucu veriyordu (ölçüldü: ikisi de 40 video).
+    # Artık tarih, gerekli olduğu kadar _resolve_video_meta ile çözülür.
+    # Maliyet kontrolü: liste en yeniden eskiye sıralı olduğu için ART ARDA
+    # STREAK_OLD tane pencere-dışı görülünce durulur (fetch_live_streams'teki
+    # aynı desen) — tek sabitlenmiş eskiyi atlar, yakını kaçırmaz.
     if last_hours and last_hours > 0:
         cut = now - int(last_hours) * 3600
-        videos_list = [v for v in videos_list
-                       if (not v.get("timestamp")) or v["timestamp"] >= cut]
+        kept, consec_old, resolved = [], 0, 0
+        STREAK_OLD, MAX_RESOLVE = 3, 40
+        for v in videos_list:
+            ts = v.get("timestamp") or 0
+            if not ts and resolved < MAX_RESOLVE and v.get("url"):
+                ts, _st = _resolve_video_meta(v["url"])
+                resolved += 1
+                if ts:
+                    v["timestamp"] = ts
+            if not ts:
+                kept.append(v)          # tarih hâlâ bilinmiyor → kaçırma, tut
+                continue
+            if ts >= cut:
+                kept.append(v)
+                consec_old = 0
+            else:
+                consec_old += 1
+                if consec_old >= STREAK_OLD:
+                    break
+        print(f"[KANAL] pencere filtresi: {len(videos_list)} → {len(kept)} "
+              f"(son {last_hours}s, {resolved} tarih sorgusu)")
+        videos_list = kept
 
     # En yeni → en eski sırala. Tarihi bilinmeyen canlı/yayın içerik "şimdi"
     # sayılıp üste çıkar; diğer tarihsizler en alta düşer.

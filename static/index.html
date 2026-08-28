@@ -1753,8 +1753,42 @@ async function scanChannel(channelUrl, hours) {
     body: JSON.stringify({url: channelUrl, hours, content_type: state.scanType})
   });
   const d = await r.json();
-  if (d.error) toast('Hata: ' + d.error, 'error');
-  else toast(`Tarama başladı: ${_scanTypeLabel()} · son ${hours}s`, 'success');
+  if (d.error) { toast('Hata: ' + d.error, 'error'); return; }
+  toast(`Tarama başladı: ${_scanTypeLabel()} · son ${hours}s`, 'success');
+  // SONUCU DA BİLDİR. Eskiden burada bitiyordu: iş birkaç saniye sonra
+  // "0 yeni video" ile kapanıyor ama kullanıcıya hiçbir şey söylenmiyordu —
+  // "sistem tarama yapmıyor" algısı buradan doğuyordu.
+  if (d.job_id) pollScanResult(d.job_id, hours);
+}
+
+async function pollScanResult(jobId, hours) {
+  for (let i = 0; i < 60; i++) {                 // ~3 dk
+    await new Promise(r => setTimeout(r, 3000));
+    let j;
+    try { j = await (await fetch('/api/job/' + encodeURIComponent(jobId))).json(); }
+    catch (e) { continue; }
+    if (j.status === 'failed') {
+      toast('Tarama başarısız: ' + (j.error || '').slice(-120), 'error');
+      return;
+    }
+    if (j.status === 'not_found' || j.status === 'unknown') return;
+    if (j.status !== 'finished') continue;
+    const res = j.result || {};
+    if (res.queued > 0) {
+      toast(`${res.channel || 'Kanal'}: ${res.queued} video sıraya alındı` +
+            (res.waiting ? ` · ${res.waiting} canlı (bitince analiz)` : ''), 'success');
+      loadChannel && state.page === 'channel' && loadChannel(state.channelId);
+    } else {
+      // Boş sonucun SEBEBİNİ söyle — kullanıcı ne yapacağını bilsin
+      const mod = res.content_type === 'live' ? 'Canlı Yayın'
+                : res.content_type === 'video' ? 'Video' : 'Tümü';
+      const neden = res.found > 0
+        ? `${res.found} içerik bulundu ama hepsi daha önce analiz edilmiş`
+        : `bu kanalda "${mod}" modunda son ${hours} saatte yeni içerik yok`;
+      toast(`Tarama bitti — yeni video eklenmedi: ${neden}`, 'info');
+    }
+    return;
+  }
 }
 
 // ─── Channel Browse (Manuel Video Seçim) ───
