@@ -108,6 +108,33 @@ def _ffmpeg_proxy_args():
     return ["-http_proxy", proxy] if proxy else []
 
 
+# Seek hatalarını AZ ama YETERLİ logla: 198 başarısız seek 198 satır basmasın,
+# ama sebep de kaybolmasın. Video başına ilk _SEEK_ERR_MAX benzersiz hata yazılır.
+_SEEK_ERR_MAX = 3
+_seek_errs = {"n": 0, "seen": set()}
+
+
+def reset_seek_errors():
+    _seek_errs["n"] = 0
+    _seek_errs["seen"] = set()
+
+
+def _log_seek_error(raw):
+    if _seek_errs["n"] >= _SEEK_ERR_MAX:
+        return
+    msg = (raw or b"").decode("utf-8", "replace").strip()
+    if not msg:
+        return
+    # Son anlamlı satır genelde asıl sebeptir (403, DNS, timeout...)
+    line = [l for l in msg.splitlines() if l.strip()][-1][:200]
+    key = re.sub(r"\d+", "#", line)[:80]     # sayıları sil → aynı hata tekrar etmesin
+    if key in _seek_errs["seen"]:
+        return
+    _seek_errs["seen"].add(key)
+    _seek_errs["n"] += 1
+    print(f"[VIDEO] ffmpeg seek hatası: {line}")
+
+
 def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
     """Tek bir zaman noktasından `-ss` (input seek = HTTP range) ile 1 frame çeker.
     Tüm videoyu indirmez — sadece o anın etrafındaki byte'ları indirir.
@@ -131,10 +158,21 @@ def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
         "-y", str(out_path),
     ]
     try:
-        subprocess.run(cmd, timeout=FRAME_SEEK_TIMEOUT,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return out_path if out_path.exists() and out_path.stat().st_size > 0 else None
-    except Exception:
+        # stderr YAKALANIYOR: eskiden DEVNULL'a gidiyordu ve seek'ler boş
+        # döndüğünde SEBEBİ hiç görünmüyordu ("ffmpeg 0 frame döndü" deyip
+        # opencv'ye düşüyorduk, kör kalıyorduk). 403 mü, DNS mi, PO token mı,
+        # anlaşılmıyordu. Artık ilk birkaç hata özetlenip loglanıyor.
+        r = subprocess.run(cmd, timeout=FRAME_SEEK_TIMEOUT,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if out_path.exists() and out_path.stat().st_size > 0:
+            return out_path
+        _log_seek_error(r.stderr)
+        return None
+    except subprocess.TimeoutExpired:
+        _log_seek_error(b"zaman asimi (FRAME_SEEK_TIMEOUT)")
+        return None
+    except Exception as e:
+        _log_seek_error(str(e).encode("utf-8", "replace"))
         return None
 
 
@@ -292,6 +330,7 @@ def _extract_frames_opencv(stream_url, frames_dir, interval, width,
 
 def _extract_frames(stream_url, frames_dir, interval, width, duration=0,
                     expected=0, on_progress=None, cancel_check=None):
+    reset_seek_errors()   # hata sayacı her VİDEO için sıfırlanır
     if shutil.which("ffmpeg"):
         try:
             res = _extract_frames_ffmpeg(stream_url, frames_dir, interval, width,
