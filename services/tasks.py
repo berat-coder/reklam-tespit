@@ -678,9 +678,9 @@ def _analyze_video_core(
         # KÜÇÜLTÜLÜR (upscale değil) → metin keskin kalır. Bant genişliği artar
         # ama analiz normal internet bağlantısındaki işçide çalışıyor.
         if not si:
-            return None, 0, 0
+            return None, 0, 0, False
         if si.get("url"):
-            return si["url"], 1, si.get("height") or 0
+            return si["url"], 1, si.get("height") or 0, False
         fmts = si.get("formats") or []
         cand = [f for f in fmts
                 if f.get("url") and f.get("vcodec") not in (None, "none")]
@@ -688,16 +688,33 @@ def _analyze_video_core(
             # DASH birleşik → video parçası
             for rf in (si.get("requested_formats") or []):
                 if rf.get("vcodec") not in (None, "none") and rf.get("url"):
-                    return rf["url"], len(fmts), rf.get("height") or 0
-            return None, len(fmts), 0
-        target = SOURCE_MIN_HEIGHT                 # hedef kaynak yüksekliği
-        # Hedefe EN YAKIN ve hedeften küçük olmayan; yoksa mevcut en yükseği
-        ge = [f for f in cand if (f.get("height") or 0) >= target]
+                    return rf["url"], len(fmts), rf.get("height") or 0, False
+            return None, len(fmts), 0, False
+        # ── HLS'i ELE: ffmpeg `-ss` seek'i HLS manifest'inde çalışmıyor.
+        # Üretimde ölçüldü: itag 96 (HLS) seçilince her seek
+        # "Error when loading first segment" + "Invalid data found when
+        # processing input" veriyor → 0 kare. DASH/progressive URL'ler tek
+        # dosya + HTTP range olduğu için seek ile sorunsuz.
+        def _is_hls(f):
+            return (f.get("protocol") or "").startswith("m3u8") or \
+                   ".m3u8" in (f.get("url") or "")
+        non_hls = [f for f in cand if not _is_hls(f)]
+        hls_only = not non_hls              # yalnız HLS → ZAYIF sonuç
+        pool_all = non_hls or cand          # hiç DASH yoksa mecburen HLS
+
+        # ── BİTRATE: en YÜKSEK tbr'yi seçmek pahalı ve gereksizdi.
+        # Ölçüm (nettop, %0.24 hata): aynı videoda aynı 1080p içinde seçenekler
+        # 4841k ile 1247k arasında — 3.9x fark. Düşük bitrate'li (AV1/VP9)
+        # 1080p karede sponsor yazısı hâlâ net okunuyor ama seek başına veri
+        # 5.80 MB yerine 0.29 MB. Bu yüzden hedefi karşılayan EN UCUZ varyant
+        # seçilir (aylık ~810 GB → ~58 GB).
+        target = SOURCE_MIN_HEIGHT
+        ge = [f for f in pool_all if (f.get("height") or 0) >= target]
         if ge:
-            ge.sort(key=lambda f: ((f.get("height") or 0), -(f.get("tbr") or 0)))
-            return ge[0]["url"], len(fmts), ge[0].get("height") or 0
-        cand.sort(key=lambda f: (-(f.get("height") or 0), -(f.get("tbr") or 0)))
-        return cand[0]["url"], len(fmts), cand[0].get("height") or 0
+            ge.sort(key=lambda f: ((f.get("height") or 0), (f.get("tbr") or 1e9)))
+            return ge[0]["url"], len(fmts), ge[0].get("height") or 0, hls_only
+        pool_all.sort(key=lambda f: (-(f.get("height") or 0), (f.get("tbr") or 1e9)))
+        return pool_all[0]["url"], len(fmts), pool_all[0].get("height") or 0, hls_only
 
     class _YdlLog:
         """yt-dlp'nin uyarılarını yakalar. Asıl ret sebebi (bot kontrolü,
@@ -716,6 +733,7 @@ def _analyze_video_core(
 
     stream_url = None
     _last_err = None
+    _weak = [None]      # yalnız-HLS sonucu: son çare olarak saklanır
     _diag = []          # her client'ın sonucu — hepsi tek mesajda gösterilir
     # CLIENT SIRASI — ölçüme göre (yt-dlp 2026.8.19 + deno/EJS ile):
     #   web_safari → TAM DASH [144…1080], PO token'a bile gerek yok  ← kazanan
@@ -746,7 +764,18 @@ def _analyze_video_core(
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
-            stream_url, nfmt, sheight = _pick_stream_url(si)
+            stream_url, nfmt, sheight, hls_only = _pick_stream_url(si)
+            # ZAYIF SONUÇ: yalnız HLS bulunduysa kabul ETME, diğer client'ları
+            # dene. Üretimde ölçüldü: web_safari tek bir HLS formatı (itag 96)
+            # döndürüyor, ffmpeg seek onu okuyamıyor ("Error when loading first
+            # segment") → 0 kare; oysa mweb aynı videoda 33 DASH formatı
+            # veriyordu. İlk cevap veren client'ı kabul etmek hatalıydı.
+            if stream_url and hls_only:
+                if _weak[0] is None:
+                    _weak[0] = (stream_url, nfmt, sheight, cname)
+                status(f"{cname}: yalnız HLS bulundu (seek uyumsuz) — "
+                       f"diğer client'lar deneniyor")
+                stream_url = None
             if stream_url:
                 # Seçilen KAYNAK çözünürlüğü loglanır: köşe logolarının marka
                 # yazısının okunabilmesi buna bağlı (düşükse tespit tahmine döner)
@@ -773,6 +802,13 @@ def _analyze_video_core(
             _last_err = f"{cname}: {str(e)[:200]}" + (f" | {warn}" if warn else "")
             _diag.append(f"{cname}[HATA] {(str(e) or warn)[:110]}")
             status(f"Stream client={cname} başarısız → {_last_err[:240]}")
+
+    if not stream_url and _weak[0]:
+        # Hiçbir client DASH vermedi → son çare olarak HLS'i dene (0 kare
+        # riski var ama hiç denememekten iyi).
+        stream_url, nfmt, sheight, wname = _weak[0]
+        status(f"Stream OK (client={wname}, kaynak={sheight or '?'}p, "
+               f"YALNIZ HLS — seek başarısız olabilir)")
 
     if not stream_url:
         msg = ("Stream URL bulunamadı — TÜM CLIENT'LAR: "
