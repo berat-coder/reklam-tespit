@@ -223,6 +223,21 @@ def mark_live_seen(video_id, channel_id="", title="", url="", analyzed=False):
               datetime.utcnow().isoformat(), int(bool(analyzed)), st))
 
 
+def get_live_attempts(video_id):
+    """Bir canlı yayın kaydının deneme sayısı (yoksa 0). Sonsuz yeniden deneme
+    döngüsünü kırmak için tavan kontrolünde kullanılır."""
+    if not video_id:
+        return 0
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT attempts FROM live_seen WHERE video_id = ?", (video_id,)
+        ).fetchone()
+    try:
+        return int(row["attempts"]) if row else 0
+    except (KeyError, TypeError, ValueError):
+        return 0
+
+
 def mark_live_status(video_id, status, error="", inc_attempt=False):
     """Bir canlı yayının durumunu güncelle (satır varsa).
     status: pending|queued|done|failed|permanent. inc_attempt=True → deneme +1."""

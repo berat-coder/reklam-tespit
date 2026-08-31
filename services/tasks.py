@@ -32,7 +32,8 @@ from services.youtube import get_ydl_opts, fetch_channel_videos, channel_id_from
 from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
-    log_event, mark_live_status, mark_live_seen, set_live_wait, _exposure_map,
+    log_event, mark_live_status, mark_live_seen, set_live_wait,
+    get_live_attempts, _exposure_map,
 )
 
 
@@ -70,11 +71,28 @@ def _vid_from_url(url):
     return m.group(1) if m else ""
 
 
+# Aynı canlı yayın en fazla bu kadar denenir; sonra 'failed' olur.
+# Üretimde tavan YOKTU: cookie olarak sınıflanan hata her tick'te (~80 sn)
+# yeniden analiz tetikliyordu — tek videoda 18 deneme, sonsuz döngü ve
+# boşa Gemini kotası.
+MAX_LIVE_ATTEMPTS = 5
+
+
 def _classify_error(err):
     """Hata mesajını sınıflandır → (code, kind). kind: 'cookie'|'permanent'|'transient'."""
     e = (err or "").lower()
     if "please sign in" in e or "sign in to confirm" in e or "sign in" in e:
-        return "cookie_expired", "cookie"
+        # "cookie" sınıfı SONSUZ yeniden denemeye açıktır ("cookie düzelince
+        # tekrar"). Bu yüzden yalnız cookie GERÇEKTEN kullanılıyorsa geçerli:
+        # YT_USE_COOKIES=0 ise düzelecek bir cookie yok, sonsuz beklemek
+        # anlamsız. Ayrıca 7 client'tan yalnız biri "sign in" derken diğerleri
+        # başka sebep söylüyorsa (ör. "No title found in player responses")
+        # bunu cookie sorunu saymak yanlış sınıflandırmaydı.
+        from services.youtube import _use_cookies
+        cookie_relevant = _use_cookies() and "no title found" not in e
+        if cookie_relevant:
+            return "cookie_expired", "cookie"
+        return "stream_error", "transient"
     if any(k in e for k in ("not available", "private", "removed", "members-only",
                             "video unavailable", "this video is unavailable",
                             "terminated", "deleted")):
@@ -586,7 +604,14 @@ def _analyze_video_core(
         target = vid or vid_guess
         if target:
             if kind == "cookie":
-                mark_live_status(target, "pending", error=str(err))      # cookie düzelince tekrar
+                # TAVAN: pending'e geri koymak sonsuz döngü demek. Tavana
+                # gelindiyse 'failed' yaz → zamanlayıcı bir daha kuyruğa almaz.
+                if get_live_attempts(target) >= MAX_LIVE_ATTEMPTS:
+                    mark_live_status(target, "failed", inc_attempt=True,
+                                     error=f"[{MAX_LIVE_ATTEMPTS} deneme aşıldı] {err}")
+                else:
+                    mark_live_status(target, "pending", error=str(err),
+                                     inc_attempt=True)
             elif kind == "permanent":
                 mark_live_status(target, "permanent", error=str(err))    # bir daha deneme
             else:
