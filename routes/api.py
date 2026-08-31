@@ -530,9 +530,26 @@ def global_search():
     })
 
 
+def _date_args():
+    """İstekten tarih filtresi oku → (day, days).
+
+    Uçlar bu parametreleri eskiden hiç okumuyordu: /api/daily-report
+    get_daily_report()'u argümansız çağırıyordu, /api/brand da öyle. Sonuç:
+    days=1, days=30 ve day=1999-01-01 aynı veriyi döndürüyordu."""
+    day = (request.args.get("day") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day or ""):
+        day = ""                      # bozuk format sessizce yok sayılır
+    try:
+        days = int(request.args.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    return (day or None), (days if days > 0 else None)
+
+
 @api_bp.route("/api/daily-report")
 def daily_report():
-    return jsonify(get_daily_report())
+    day, days = _date_args()
+    return jsonify(get_daily_report(day=day, days=days))
 
 
 @api_bp.route("/api/dashboard")
@@ -558,7 +575,8 @@ def intelligence():
 
 @api_bp.route("/api/brand/<path:name>")
 def brand_detail(name):
-    return jsonify(get_brand_appearances(name))
+    _, days = _date_args()
+    return jsonify(get_brand_appearances(name, days=days))
 
 
 @api_bp.route("/api/analyses")
@@ -620,12 +638,13 @@ def export_channel_csv(ch_id):
 
 @api_bp.route("/api/brand/<path:name>/export.csv")
 def export_brand_csv(name):
-    data = get_brand_appearances(name)
-    rows = [[v["channel_name"], v["title"], v["count"], (v.get("analyzed_at") or "")[:10]]
-            for v in data["videos"]]
+    _, days = _date_args()
+    data = get_brand_appearances(name, days=days)
+    rows = [[v["channel_name"], v["title"], v["count"], v.get("seconds", 0),
+             (v.get("analyzed_at") or "")[:10]] for v in data["videos"]]
     safe = (data["marka"] or name).replace(" ", "_").replace("/", "-")
     return _csv_response(f"marka_{safe}.csv",
-                         ["Kanal", "Video", "Reklam Sayısı", "Tarih"], rows)
+                         ["Kanal", "Video", "Çıkış Sayısı", "Görünürlük (sn)", "Tarih"], rows)
 
 
 @api_bp.route("/api/dashboard/export.csv")

@@ -1266,9 +1266,12 @@ def _backfill_exposure(video_id):
                              channel_name=ch.get("name", ""),
                              auto_main_sponsors=ch.get("auto_main_sponsors", []))
     exp = _exposure_map(agg)
+    # Markası olmayan video için de İŞARET yaz. Yoksa kolona '{}' yazılıyor,
+    # bu da "boş" okunduğu için video HER İSTEKTE yeniden hesaplanıyordu ve
+    # asla yakınsamıyordu: /api/intelligence istek başına 49 saniye sürüyordu.
     with get_db() as conn:
         conn.execute("UPDATE videos SET brand_exposure = ? WHERE id = ?",
-                     (json.dumps(exp, ensure_ascii=False), video_id))
+                     (json.dumps(exp or {"_none": True}, ensure_ascii=False), video_id))
     return exp
 
 
@@ -1325,6 +1328,9 @@ def get_intelligence(days=0):
         in_prev = bool(prev_since) and prev_since <= at < (since or "")
 
         for marka, e in exp.items():
+            # "_none" gibi işaret anahtarları marka değil; e sözlük de olmayabilir
+            if not marka or marka.startswith("_") or not isinstance(e, dict):
+                continue
             sec = float(e.get("sec") or 0)
             if sec <= 0:
                 continue
@@ -1334,18 +1340,9 @@ def get_intelligence(days=0):
                 prev_sec[marka] = prev_sec.get(marka, 0.0) + sec
             if not in_period:
                 continue
-            emv = emv_of(sec, e.get("prom", 0.5), rate)
-            b = brands.setdefault(marka, {
-                "marka": marka, "seconds": 0.0, "appearances": 0, "emv": 0.0,
-                "kind": e.get("kind", "spot"), "channels": set(), "videos": 0,
-            })
-            b["seconds"] += sec
-            b["appearances"] += int(e.get("app") or 0)
-            b["emv"] += emv
-            b["channels"].add(cname)
-            b["videos"] += 1
-            if e.get("kind") == "sponsorluk":
-                b["kind"] = "sponsorluk"
+            # Günlük raporla AYNI toplayıcı — iki yerde ayrı matematik yüzünden
+            # aynı ekranda çelişen sıralamalar çıkıyordu.
+            _, emv = _accumulate_brand(brands, marka, e, cname, rate)
             matrix.setdefault(marka, {})
             matrix[marka][cname] = round(matrix[marka].get(cname, 0.0) + sec)
             total_sec += sec
@@ -1359,15 +1356,7 @@ def get_intelligence(days=0):
             except Exception:
                 pass
 
-    out = []
-    for b in brands.values():
-        out.append({**b,
-                    "channels": sorted(b["channels"]),
-                    "channel_count": len(b["channels"]),
-                    "seconds": round(b["seconds"]),
-                    "emv": round(b["emv"]),
-                    "sov_pct": round(100 * b["seconds"] / total_sec, 1) if total_sec else 0.0})
-    out.sort(key=lambda x: -x["seconds"])
+    out = _finish_brands(brands, total_sec)
 
     # ── Uyarılar: yeni marka, kaybolan sponsor, ani değişim ──
     alerts = []
@@ -1483,23 +1472,95 @@ def get_dashboard_data(since=None):
     }
 
 
-def _brand_summary(videos):
-    """Verilen videolardan top marka + sayaçlar (kanal logosu/sponsor zaten agregada)."""
-    brands = {}
+def _accumulate_brand(bucket, marka, e, cname, rate):
+    """Bir markanın BİR videodaki süre/çıkış katkısını kovaya ekler.
+
+    Günlük rapor ile istihbarat ekranı aynı matematiği kullansın diye tek yerde:
+    ikisi ayrı hesaplarken aynı ekranda çelişen iki sıralama çıkıyordu.
+    Döner: (saniye, emv) — çağıran toplamlarını günceller."""
+    sec = float(e.get("sec") or 0)
+    emv = emv_of(sec, e.get("prom", 0.5), rate)
+    b = bucket.setdefault(marka, {
+        "marka": marka, "seconds": 0.0, "appearances": 0, "emv": 0.0,
+        "kind": e.get("kind", "spot"), "channels": set(), "videos": 0,
+    })
+    b["seconds"] += sec
+    b["appearances"] += int(e.get("app") or 0)
+    b["emv"] += emv
+    b["channels"].add(cname)
+    b["videos"] += 1
+    if e.get("kind") == "sponsorluk":
+        b["kind"] = "sponsorluk"
+    return sec, emv
+
+
+def _finish_brands(bucket, total_sec):
+    """Kovayı JSON'a hazır listeye çevir; pay (SoV) toplam süreye göre."""
+    out = [{**b,
+            "channels": sorted(b["channels"]),
+            "channel_count": len(b["channels"]),
+            "seconds": round(b["seconds"]),
+            "emv": round(b["emv"]),
+            "sov_pct": round(100 * b["seconds"] / total_sec, 1) if total_sec else 0.0}
+           for b in bucket.values()]
+    out.sort(key=lambda x: -x["seconds"])
+    return out
+
+
+def _brand_summary(videos, ch_cache=None):
+    """Verilen videolardan marka özeti — SÜRE/ÇIKIŞ modeli.
+
+    ch_cache: kanal adı/EMV oranı önbelleği. get_daily_report bunu İKİ çağrı
+    arasında paylaşır; yoksa her çağrı aynı kanalları yeniden sorguluyor ve
+    kanal başına yeni bir DB bağlantısı açılıyordu (üretimde istek başına 22).
+
+    ESKİDEN brand_counts toplanıyordu: bu kolon markayı KARE BAŞINA sayar.
+    Ekranın köşesinde yayın boyunca duran ana sponsor logosu her karede bir
+    "reklam" sayıldığı için tek bir sponsorluk günlük raporda 40+ reklam gibi
+    görünüyordu (üretim örneği: Esperantos 1 sponsorluk → raporda 5 reklam;
+    Dünya Katılım Bankası 11 çıkış → raporda 46 reklam).
+
+    Artık brand_exposure (saniye + çıkış sayısı) kullanılıyor ve KALICI
+    SPONSORLUKLAR ile SPOT REKLAMLAR ayrı listeleniyor — biri süreyle, diğeri
+    çıkış sayısıyla anlamlı olduğu için tek listede karşılaştırmak yanıltıcı."""
+    bucket = {}
+    if ch_cache is None:
+        ch_cache = {}
+    total_sec = total_emv = 0.0
     ad_frames = 0
     channels = set()
     for v in videos:
         ad_frames += v.get("ad_frame_count", 0)
-        channels.add(v["channel_id"])
-        for m, c in (v.get("brand_counts") or {}).items():
-            brands[m] = brands.get(m, 0) + c
-    top = sorted(({"marka": m, "count": c} for m, c in brands.items()),
-                 key=lambda x: -x["count"])
+        cid = v["channel_id"]
+        channels.add(cid)
+        if cid not in ch_cache:
+            c = get_channel(cid) or {}
+            ch_cache[cid] = (c.get("name") or cid, channel_emv_rate(c))
+        cname, rate = ch_cache[cid]
+        for marka, e in (v.get("brand_exposure") or {}).items():
+            # "_none" gibi işaret anahtarları marka değildir
+            if not marka or marka.startswith("_") or not isinstance(e, dict):
+                continue
+            if float(e.get("sec") or 0) <= 0:
+                continue
+            sec, emv = _accumulate_brand(bucket, marka, e, cname, rate)
+            total_sec += sec
+            total_emv += emv
+    brands = _finish_brands(bucket, total_sec)
     return {
         "video_count": len(videos),
         "ad_frames": ad_frames,
         "channel_count": len(channels),
-        "top_brands": top,
+        "brands": brands,
+        "sponsorships": [b for b in brands if b["kind"] == "sponsorluk"],
+        "spots": [b for b in brands if b["kind"] != "sponsorluk"],
+        "total_seconds": round(total_sec),
+        "total_emv": round(total_emv),
+        # Arayüz hâlâ top_brands okuyor — ama 'count' artık ÇIKIŞ sayısı
+        # (kare sayısı değil), yani şişme burada da bitiyor.
+        "top_brands": [{"marka": b["marka"], "count": b["appearances"],
+                        "seconds": b["seconds"], "kind": b["kind"],
+                        "sov_pct": b["sov_pct"]} for b in brands],
     }
 
 
@@ -1515,61 +1576,123 @@ def _tr_date(iso):
         return ""
 
 
-def get_daily_report(day=None):
-    """Ana sayfa günlük raporu: bugünün ve son 7 günün öne çıkan markaları + aktivite.
-    'Bugün' İstanbul gününe göredir — UTC kullanmak 00:00-03:00 TR arasında yanlış gün verir."""
-    now_tr = datetime.utcnow() + __import__("datetime").timedelta(hours=_TR_UTC_OFFSET)
-    today = day or now_tr.strftime("%Y-%m-%d")
-    week_cut = (now_tr - __import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
+def get_daily_report(day=None, days=None):
+    """Günlük rapor: seçilen dönemin markaları + son 7 gün karşılaştırması.
+
+    day  : belirli bir İstanbul günü ('YYYY-MM-DD') → yalnız o gün
+    days : son N gün (1 = bugün, 7 = son hafta) → aralık
+    ikisi de yoksa → bugün (eski davranış)
+
+    'Bugün' İstanbul gününe göredir — UTC kullanmak 00:00-03:00 TR arasında
+    yanlış gün verir.
+
+    NOT: bu parametreler eskiden HİÇ işlemiyordu — /api/daily-report ucu
+    get_daily_report()'u argümansız çağırıyordu ve fonksiyon 'days' kabul
+    etmiyordu. days=1, days=30 ve day=1999-01-01 aynı sonucu döndürüyordu."""
+    from datetime import timedelta
+    now_tr = datetime.utcnow() + timedelta(hours=_TR_UTC_OFFSET)
+    today = now_tr.strftime("%Y-%m-%d")
     videos = get_all_videos(completed_only=True)
-    today_v = [v for v in videos if _tr_date(v.get("analyzed_at")) == today]
+    week_cut = (now_tr - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    if day:
+        sel = [v for v in videos if _tr_date(v.get("analyzed_at")) == day]
+        label, date_shown = day, day
+    elif days and days > 0:
+        cut = (now_tr - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        sel = [v for v in videos if _tr_date(v.get("analyzed_at")) >= cut]
+        label = today if days == 1 else f"{cut} → {today}"
+        date_shown = today
+    else:
+        sel = [v for v in videos if _tr_date(v.get("analyzed_at")) == today]
+        label, date_shown = today, today
+
     week_v = [v for v in videos if _tr_date(v.get("analyzed_at")) >= week_cut]
     last_day = max((_tr_date(v.get("analyzed_at")) for v in videos), default="")
+    ch_cache = {}          # iki özet aynı kanalları iki kez sorgulamasın
     return {
-        "date": today,
-        "today": _brand_summary(today_v),
-        "week": _brand_summary(week_v),
+        "date": date_shown,
+        "range_label": label,
+        "day": day or "",
+        "days": days or 0,
+        "period_videos": len(sel),          # filtrenin etkisi burada görünür
+        "today": _brand_summary(sel, ch_cache),
+        "week": _brand_summary(week_v, ch_cache),
         "last_active_day": last_day,
         "total_channels": len({v["channel_id"] for v in videos}),
-        "total_videos": len(videos),
+        "total_videos": len(videos),        # tüm zamanlar (filtreden bağımsız)
     }
 
 
-def get_brand_appearances(marka):
-    """Bir markanın tüm kanal/videolardaki görünümleri + haftalık trend."""
+def get_brand_appearances(marka, days=None):
+    """Bir markanın kanal/videolardaki görünümleri + günlük trend.
+
+    days verilirse yalnız son N günün videoları (uç eskiden 'days' parametresini
+    yok sayıyordu; days=1 ile days=365 aynı sonucu döndürüyordu).
+
+    Sayılar SÜRE/ÇIKIŞ modelinden (brand_exposure) gelir. Eskiden brand_counts
+    okunuyordu — kare başına sayan kolon — ve köşede duran kalıcı logo yüzünden
+    tek sponsorluk onlarca "reklam" gibi görünüyordu. brand_exposure'ı olmayan
+    (süre modeli öncesi) videolarda kare sayısına düşülür, ama 'kind' bilinmez."""
+    from datetime import timedelta
     key = (marka or "").strip().casefold()
     videos = get_all_videos(completed_only=True)
+    if days and days > 0:
+        now_tr = datetime.utcnow() + timedelta(hours=_TR_UTC_OFFSET)
+        cut = (now_tr - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        videos = [v for v in videos if _tr_date(v.get("analyzed_at")) >= cut]
     out_videos = []
     channels = set()
-    total = 0
+    total = total_sec = 0
     timeline = {}
     display = marka
+    kind = ""
     for v in videos:
-        bc = v.get("brand_counts") or {}
-        match = next((m for m in bc if m.strip().casefold() == key), None)
-        if not match:
-            continue
-        cnt = bc[match]
+        exp = {k: e for k, e in (v.get("brand_exposure") or {}).items()
+               if k and not k.startswith("_") and isinstance(e, dict)}
+        match = next((m for m in exp if m.strip().casefold() == key), None)
+        if match:
+            e = exp[match]
+            cnt = int(e.get("app") or 0)
+            sec = round(float(e.get("sec") or 0))
+            if e.get("kind") == "sponsorluk":
+                kind = "sponsorluk"
+            elif not kind:
+                kind = e.get("kind") or ""
+        else:
+            bc = v.get("brand_counts") or {}
+            match = next((m for m in bc if m.strip().casefold() == key), None)
+            if not match:
+                continue
+            cnt, sec = bc[match], 0      # süre modeli öncesi kayıt
         display = match
         total += cnt
+        total_sec += sec
         channels.add(v["channel_id"])
         out_videos.append({
             "video_id": v["id"], "title": v["title"],
             "channel_id": v["channel_id"], "channel_name": v.get("channel_name", ""),
             "thumbnail": v["thumbnail"], "analyzed_at": v["analyzed_at"],
-            "count": cnt,
+            "count": cnt, "seconds": sec,
         })
         day = _tr_date(v.get("analyzed_at"))
         if day:
-            timeline[day] = timeline.get(day, 0) + cnt
+            t = timeline.setdefault(day, {"count": 0, "seconds": 0})
+            t["count"] += cnt
+            t["seconds"] += sec
 
     return {
         "marka": display,
-        "total": total,
+        "kind": kind or "spot",
+        "total": total,                  # ÇIKIŞ sayısı (kare değil)
+        "appearances": total,
+        "seconds": total_sec,
+        "days": days or 0,
         "video_count": len(out_videos),
         "channel_count": len(channels),
         "videos": out_videos,
-        "timeline": [{"date": d, "count": c} for d, c in sorted(timeline.items())],
+        "timeline": [{"date": d, "count": t["count"], "seconds": t["seconds"]}
+                     for d, t in sorted(timeline.items())],
     }
 
 

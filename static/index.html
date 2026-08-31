@@ -1505,8 +1505,8 @@ async function loadHome() {
     fetch('/api/channels').then(r => r.json()).catch(() => ({channels: []})),
   ]);
   const channels = chRes.channels || [];
-  const today = rep.today || {video_count: 0, ad_frames: 0, top_brands: []};
-  const week = rep.week || {video_count: 0, ad_frames: 0, top_brands: []};
+  const today = rep.today || {video_count: 0, total_seconds: 0, brands: []};
+  const week = rep.week || {video_count: 0, total_seconds: 0, brands: []};
   const dateStr = new Date().toLocaleDateString('tr-TR', {timeZone:'Europe/Istanbul', weekday:'long', day:'numeric', month:'long'});
 
   // ── Başlık + hızlı analiz ──
@@ -1531,11 +1531,11 @@ async function loadHome() {
   const useToday = today.video_count > 0;
   const src = useToday ? today : week;
   const label = useToday ? 'Bugün' : 'Son 7 gün';
-  const brands = (src.top_brands || []).slice(0, 8);
+  const brands = (src.brands || src.top_brands || []).slice(0, 8);
   html += `<div class="section report-hero">
     <div class="section-head">
       <div class="section-title-lg">${useToday ? 'Bugün Öne Çıkan Markalar' : 'Son 7 Günün Öne Çıkan Markaları'}</div>
-      <div class="report-meta">${src.video_count} video · ${src.ad_frames} reklam
+      <div class="report-meta">${src.video_count} yayın · ${_durTr(src.total_seconds || 0)} görünürlük
         · <span style="cursor:pointer;color:var(--accent);font-weight:600" onclick="goDailyBrands()">Tüm markalar →</span></div>
     </div>`;
   if (!brands.length) {
@@ -1543,15 +1543,9 @@ async function loadHome() {
       ${useToday ? 'Bugün henüz analiz yapılmadı.' : 'Henüz veri yok.'} Bir YouTube linki yapıştırıp analiz et veya bir kanal tara.
     </div>`;
   } else {
-    const max = Math.max(...brands.map(b => b.count));
-    html += `<div class="report-brands">` + brands.map((b, i) => `
-      <div class="report-brand" onclick="openBrand('${jsq(b.marka)}')">
-        <span class="rb-rank">${i + 1}</span>
-        ${brandAvatar(b.marka)}
-        <span class="rb-name">${esc(b.marka)}</span>
-        <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((b.count/max)*100)}%"></span></span>
-        <span class="rb-count">${b.count}</span>
-      </div>`).join('') + `</div>`;
+    // Görünürlük süresine göre — ana sayfada tek sıralama yeter, ayrıntı
+    // (sponsorluk/spot ayrımı) Günlük Rapor ekranında.
+    html += `<div class="report-brands">${_brandRows(brands, 'seconds')}</div>`;
   }
   html += `</div>`;
 
@@ -1561,7 +1555,7 @@ async function loadHome() {
     <div class="stat-tile"><div class="stat-tile-num">${rep.total_channels ?? channels.length}</div><div class="stat-tile-lbl">Takipteki Kanal</div></div>
     <div class="stat-tile"><div class="stat-tile-num">${rep.total_videos ?? 0}</div><div class="stat-tile-lbl">Analiz Edilen Video</div></div>
     <div class="stat-tile"><div class="stat-tile-num">${week.video_count}</div><div class="stat-tile-lbl">Bu Hafta Video</div></div>
-    <div class="stat-tile red"><div class="stat-tile-num">${week.ad_frames}</div><div class="stat-tile-lbl">Bu Hafta Reklam</div></div>
+    <div class="stat-tile red"><div class="stat-tile-num">${_durTr(week.total_seconds || 0)}</div><div class="stat-tile-lbl">Bu Hafta Görünürlük</div></div>
   </div>`;
 
   // ── Kanallar (sade liste) ──
@@ -3818,7 +3812,7 @@ function renderRoute() {
   else if (seg === 'marka' && arg) { state.page = 'brand'; state.brand = arg; setActiveNav(null); loadBrandDetail(arg); }
   else if (seg === 'sec' && arg)   { state.page = 'browse'; state.channelId = arg; setActiveNav(null); loadBrowse(arg); }
   else if (seg === 'ara' && arg)   { state.page = 'search'; setActiveNav(null); loadSearch(arg); }
-  else if (seg === 'gun')          { state.page = 'daily'; setActiveNav(null); loadDailyBrands(); }
+  else if (seg === 'gun')          { state.page = 'daily'; setActiveNav(null); loadDailyBrands(arg); }
   else if (seg === 'izle')      { state.page = 'live'; state.channelId = arg || null; _liveBuilt = false; _liveLastDetCount = -1; _liveWaitCount = 0; setActiveNav(null); startLivePolling(); }
   else { state.page = 'home'; setActiveNav('navHome'); loadHome(); }
 
@@ -3828,46 +3822,95 @@ function renderRoute() {
 window.addEventListener('hashchange', renderRoute);
 
 // ─── Günün Markaları (tam liste) ───
-function _brandRows(brands, onclickFn) {
-  if (!brands.length) return '<div class="empty-card" style="border:none;background:transparent">Bu aralıkta marka yok.</div>';
-  const max = Math.max(...brands.map(b => b.count));
+// metric: 'seconds' (kalıcı sponsorluk → görünürlük süresi anlamlı)
+//         'appearances' (spot reklam → kaç kez çıktığı anlamlı)
+// Eskiden tek ölçü vardı ve o da KARE sayısıydı: köşede yayın boyunca duran
+// logo her karede bir "reklam" sayıldığı için tek sponsorluk 40+ reklam
+// görünüyordu. İki ölçüyü ayırmak kullanıcının asıl şikayetiydi.
+function _brandRows(brands, metric) {
+  if (!brands || !brands.length) return '<div class="empty-card" style="border:none;background:transparent">Bu aralıkta marka yok.</div>';
+  metric = metric || 'appearances';
+  const val = b => (metric === 'seconds' ? (b.seconds || 0) : (b.appearances != null ? b.appearances : (b.count || 0)));
+  const max = Math.max(1, ...brands.map(val));
   return brands.map((b, i) => `
     <div class="report-brand" onclick="openBrand('${jsq(b.marka)}')">
       <span class="rb-rank">${i + 1}</span>
       ${brandAvatar(b.marka)}
       <span class="rb-name">${esc(b.marka)}</span>
-      <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((b.count/max)*100)}%"></span></span>
-      <span class="rb-count">${b.count}</span>
+      <span class="rb-bar"><span class="rb-fill" style="width:${Math.round((val(b)/max)*100)}%"></span></span>
+      <span class="rb-count" title="${metric === 'seconds' ? 'ekranda toplam görünürlük' : 'kaç kez ekrana geldi'}">${
+        metric === 'seconds' ? _durTr(b.seconds || 0) : (val(b) + '×')
+      }</span>
     </div>`).join('');
 }
 
-async function loadDailyBrands() {
+// Günlük rapor tarih filtresi — seçim hash'e yazılır (#/gun/7, #/gun/2026-08-05)
+// böylece yenilemede korunur ve link paylaşılabilir.
+function _reportFilterBar(sel) {
+  const opts = [[1, 'Bugün'], [7, 'Son 7 gün'], [30, 'Son 30 gün'], [365, 'Tümü']];
+  const btns = opts.map(([d, lbl]) =>
+    `<button class="chip${String(sel) === String(d) ? ' active' : ''}" onclick="navTo('#/gun/${d}')">${lbl}</button>`).join('');
+  const isDay = /^\d{4}-\d{2}-\d{2}$/.test(String(sel || ''));
+  return `<div class="filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+    ${btns}
+    <input type="date" class="chip" value="${isDay ? sel : ''}" max="${new Date().toISOString().slice(0,10)}"
+           onchange="if(this.value) navTo('#/gun/' + this.value)"
+           title="belirli bir gün seç" style="padding:5px 8px">
+  </div>`;
+}
+
+let _reportSeq = 0;   // yarış koruması — aşağıya bak
+
+async function loadDailyBrands(sel) {
+  // sel: gün sayısı ('7') veya belirli gün ('2026-08-05'); yoksa bugün
+  const isDay = /^\d{4}-\d{2}-\d{2}$/.test(String(sel || ''));
+  const qs = isDay ? ('?day=' + encodeURIComponent(sel))
+                   : ('?days=' + (parseInt(sel) || 1));
+  // Filtreye hızlı tıklanınca 30 günlük istek 1 günlükten sonra dönüp ekranı
+  // ezebiliyor (ölçüldü: hash #/gun/1 iken ekranda 7 günün verisi kaldı).
+  // Yalnız EN SON isteğin sonucu çizilir.
+  const seq = ++_reportSeq;
   let d;
-  try { d = await (await fetch('/api/daily-report')).json(); }
-  catch (e) { $('main').innerHTML = '<div class="empty-card">Yüklenemedi</div>'; return; }
-  const today = d.today || {video_count: 0, ad_frames: 0, top_brands: []};
-  const week = d.week || {video_count: 0, ad_frames: 0, top_brands: []};
-  const dateStr = new Date().toLocaleDateString('tr-TR', {timeZone:'Europe/Istanbul', weekday:'long', day:'numeric', month:'long'});
+  try { d = await (await fetch('/api/daily-report' + qs)).json(); }
+  catch (e) {
+    if (seq === _reportSeq) $('main').innerHTML = '<div class="empty-card">Yüklenemedi</div>';
+    return;
+  }
+  if (seq !== _reportSeq) return;      // daha yeni bir filtre seçilmiş
+  const cur = d.today || {};
+  const spons = cur.sponsorships || [];
+  const spots = cur.spots || [];
 
   let html = `<div class="page-header"><div>
-      <h1>Günün Markaları</h1>
-      <div class="subtitle">${esc(dateStr)} · o gün görülen TÜM markalar</div>
+      <h1>Günlük Rapor</h1>
+      <div class="subtitle">${esc(d.range_label || '')} · ${d.period_videos || 0} yayın</div>
     </div></div>`;
 
+  html += _reportFilterBar(isDay ? sel : (parseInt(sel) || 1));
+
+  html += `<div class="stat-tiles">
+    <div class="stat-tile"><div class="stat-tile-num">${_durTr(cur.total_seconds || 0)}</div><div class="stat-tile-lbl">Toplam Görünürlük</div></div>
+    <div class="stat-tile"><div class="stat-tile-num">${spons.length}</div><div class="stat-tile-lbl">Kalıcı Sponsorluk</div></div>
+    <div class="stat-tile"><div class="stat-tile-num">${spots.reduce((a, b) => a + (b.appearances || 0), 0)}</div><div class="stat-tile-lbl">Spot Çıkışı</div></div>
+    <div class="stat-tile"><div class="stat-tile-num">${(cur.brands || []).length}</div><div class="stat-tile-lbl">Marka</div></div>
+  </div>`;
+
+  // İKİ AYRI BLOK: kalıcı sponsorluk süreyle, spot reklam çıkış sayısıyla
+  // anlamlıdır; tek listede karşılaştırmak yanıltıcıydı.
   html += `<div class="section">
     <div class="section-head">
-      <div class="section-title-lg">Bugün</div>
-      <div class="report-meta">${today.video_count} video · ${today.ad_frames} reklam · ${(today.top_brands||[]).length} marka</div>
+      <div class="section-title-lg">Kalıcı Sponsorluklar</div>
+      <div class="report-meta">yayın boyunca ekranda duran logolar · görünürlük süresi</div>
     </div>
-    <div class="report-brands">${_brandRows(today.top_brands || [])}</div>
+    <div class="report-brands">${_brandRows(spons, 'seconds')}</div>
   </div>`;
 
   html += `<div class="section">
     <div class="section-head">
-      <div class="section-title-lg">Son 7 Gün</div>
-      <div class="report-meta">${week.video_count} video · ${week.ad_frames} reklam · ${(week.top_brands||[]).length} marka</div>
+      <div class="section-title-lg">Spot Reklamlar</div>
+      <div class="report-meta">araya giren reklamlar · kaç kez ekrana geldiği</div>
     </div>
-    <div class="report-brands">${_brandRows(week.top_brands || [])}</div>
+    <div class="report-brands">${_brandRows(spots, 'appearances')}</div>
   </div>`;
 
   $('main').innerHTML = html;
