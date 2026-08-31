@@ -11,6 +11,7 @@ import time
 import base64
 import shutil
 import subprocess
+import threading
 from datetime import datetime
 
 import cv2
@@ -153,27 +154,44 @@ def _ffmpeg_proxy_args():
 # Seek hatalarını AZ ama YETERLİ logla: 198 başarısız seek 198 satır basmasın,
 # ama sebep de kaybolmasın. Video başına ilk _SEEK_ERR_MAX benzersiz hata yazılır.
 _SEEK_ERR_MAX = 3
-_seek_errs = {"n": 0, "seen": set()}
+# Onarım geçişi yalnız bu orandan AZ kare boşsa çalışır (üstü = bozuk akış).
+REPAIR_MAX_MISSING_RATIO = 0.5
+# Seek'ler ThreadPoolExecutor içinde koştuğu için sayaç KİLİTLİ olmalı.
+_seek_lock = threading.Lock()
+_seek_errs = {"n": 0, "seen": set(), "lines": []}
 
 
 def reset_seek_errors():
-    _seek_errs["n"] = 0
-    _seek_errs["seen"] = set()
+    with _seek_lock:
+        _seek_errs["n"] = 0
+        _seek_errs["seen"] = set()
+        _seek_errs["lines"] = []
+
+
+def seek_error_summary(sep=" | "):
+    """Toplanan ffmpeg sebeplerini metin olarak döndür.
+
+    Bu ÖNEMLİ: sebepler eskiden yalnız print ile Railway loguna gidiyordu,
+    kaydedilen hata ise düpedüz "Frame çıkarılamadı" idi. Üretimde 52 kayıt
+    böyle teşhissiz kaldı — 403 mü, zaman aşımı mı, IP kilidi mi, anlaşılmıyordu.
+    Artık sebep hata mesajına ekleniyor."""
+    with _seek_lock:
+        return sep.join(_seek_errs["lines"])[:600]
 
 
 def _log_seek_error(raw):
-    if _seek_errs["n"] >= _SEEK_ERR_MAX:
-        return
     msg = (raw or b"").decode("utf-8", "replace").strip()
     if not msg:
         return
     # Son anlamlı satır genelde asıl sebeptir (403, DNS, timeout...)
     line = [l for l in msg.splitlines() if l.strip()][-1][:200]
     key = re.sub(r"\d+", "#", line)[:80]     # sayıları sil → aynı hata tekrar etmesin
-    if key in _seek_errs["seen"]:
-        return
-    _seek_errs["seen"].add(key)
-    _seek_errs["n"] += 1
+    with _seek_lock:
+        if _seek_errs["n"] >= _SEEK_ERR_MAX or key in _seek_errs["seen"]:
+            return
+        _seek_errs["seen"].add(key)
+        _seek_errs["lines"].append(line)
+        _seek_errs["n"] += 1
     print(f"[VIDEO] ffmpeg seek hatası: {line}")
 
 
@@ -297,17 +315,42 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
             ex.shutdown(wait=False, cancel_futures=True)
 
     fast = bool(FRAME_SEEK_FAST)
-    _run_pass(range(len(timestamps)), fast=fast, workers=FRAME_SEEK_WORKERS)
+
+    # ÖN YOKLAMA — akış URL'si ölüyse (403 / süresi geçmiş imza / IP kilidi)
+    # 121 seek'in HEPSİ boş döner, ardından onarım geçişi aynı 121 noktayı
+    # yavaş modda TEKRAR dener. Üretimde bunun sonucu 97 dakikalık yayından
+    # 1 kare + boşa bir Gemini çağrısı + iki tur bant genişliği oldu.
+    # Videoya yayılmış birkaç noktayı önce dene: hiçbiri kare vermiyorsa
+    # URL bozuk demektir, kalan seek'leri hiç yapma.
+    probe = sorted({int(i * (len(timestamps) - 1) / 3) for i in range(4)}) \
+        if len(timestamps) >= 8 else []
+    if probe:
+        _run_pass(probe, fast=fast, workers=min(len(probe), FRAME_SEEK_WORKERS))
+        if not cancelled and not any(results[i] for i in probe):
+            print(f"[VIDEO] ön yoklama {len(probe)} noktada da kare vermedi — akış "
+                  f"URL'si erişilemez; kalan {len(timestamps) - len(probe)} seek "
+                  f"ATLANDI. Sebep: {seek_error_summary() or 'bilinmiyor'}")
+            return []
+
+    if not cancelled:
+        rest = [i for i in range(len(timestamps)) if results[i] is None]
+        _run_pass(rest, fast=fast, workers=FRAME_SEEK_WORKERS,
+                  done_offset=len(timestamps) - len(rest))
 
     # Onarım geçişi: hızlı (keyframe) modda başarısız kalan noktaları bir kez
     # hassas modla dene — bazı format/proxy kombinasyonlarında keyframe seek
-    # tek tük 403/EOF verebiliyor.
+    # tek tük 403/EOF verebiliyor. "Tek tük" şartı artık ZORUNLU: çoğunluk
+    # boşken akış zaten bozuktur, tekrar denemek maliyeti ikiye katlar.
     if fast and not cancelled:
         missing = [i for i, r in enumerate(results) if r is None]
-        if missing:
+        got = len(timestamps) - len(missing)
+        if missing and got and len(missing) <= len(timestamps) * REPAIR_MAX_MISSING_RATIO:
             print(f"[VIDEO] hızlı seek {len(missing)} karede boş kaldı — hassas modla onarılıyor")
-            _run_pass(missing, fast=False, workers=4,
-                      done_offset=len(timestamps) - len(missing))
+            _run_pass(missing, fast=False, workers=4, done_offset=got)
+        elif missing:
+            print(f"[VIDEO] {len(missing)}/{len(timestamps)} kare boş, alınan {got} — "
+                  f"onarım geçişi ATLANDI (akış bozuk görünüyor). "
+                  f"Sebep: {seek_error_summary() or 'bilinmiyor'}")
 
     return [r for r in results if r]
 
@@ -924,9 +967,14 @@ def _analyze_video_core(
 
     total_frames = len(frames_data)
     if total_frames == 0:
-        status("Frame çıkarılamadı — video erişilemiyor olabilir")
-        _record_fail("Frame çıkarılamadı", video_id)
-        on_set_live(status="error", message="Frame çıkarılamadı", progress=0)
+        # Sebebi mesaja EKLE: 52 üretim kaydı düpedüz "Frame çıkarılamadı"
+        # yazıyordu ve neden başarısız olduğu hiçbir yerde görünmüyordu.
+        why = seek_error_summary()
+        detail = "Frame çıkarılamadı" + (f" — ffmpeg: {why}" if why else
+                                         " (ffmpeg sebep bildirmedi)")
+        status(detail[:200])
+        _record_fail(detail, video_id)
+        on_set_live(status="error", message=detail[:300], progress=0)
         return
 
     # 5. Sahne kümeleme + alt-bant yükseltici — sadece adayları Gemini'ye gönder
