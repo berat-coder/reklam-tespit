@@ -1465,7 +1465,9 @@ def _verify_video_core(video_id):
             return
 
         print(f"[DOĞRULAMA] {video_id}: {len(targets)} reklam karesi "
-              f"{verifier.name}/{verifier.model} ile denetleniyor")
+              f"{verifier.name}"
+              f"{'/' + verifier.model if verifier.model else ' (model otomatik)'}"
+              f" ile denetleniyor")
         confirmed = rejected = uncertain = 0
         for b in range(0, len(targets), VERIFY_BATCH_SIZE):
             chunk = targets[b:b + VERIFY_BATCH_SIZE]
@@ -1491,7 +1493,10 @@ def _verify_video_core(video_id):
             parsed, err = verifier.analyze_frames(frames, prompt)
             verify_budget_spend()
             if err == "QUOTA_DAILY":
-                print("[DOĞRULAMA] sağlayıcı günlük kotası doldu — durduruldu")
+                from services.vision_providers import mark_provider_quota
+                mark_provider_quota(verifier.name)
+                print(f"[DOĞRULAMA] {verifier.name} günlük kotası doldu — "
+                      f"bugünlük atlanacak, sonraki videolar sıradaki sağlayıcıyla")
                 break
             if err or not isinstance(parsed, (list, dict)):
                 print(f"[DOĞRULAMA] batch hatası (atlandı): {err or 'parse'}")
