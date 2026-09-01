@@ -59,7 +59,8 @@ def kur(ct):
     S.set_live_wait = lambda vid: bekleyen.append(vid)
     S.log_event = lambda *a, **kw: None
     try:
-        n = S._discover({"channels": ["https://youtube.com/@k"]}, 24, {}, content_type=ct)
+        n = S._discover({"channels": ["https://youtube.com/@k"]}, 24, {},
+                        content_type=ct, tick_no=0)
     finally:
         (Y.fetch_live_streams, Y.fetch_channel_videos, S.is_live_seen,
          S.is_video_completed, S.mark_live_seen, S.set_live_wait, S.log_event) = eski
@@ -98,6 +99,30 @@ for gap_sn, ad in ((69, "69 sn (üretimdeki gerçek tick)"), (300, "5 dk"), (360
 # uzun kesintide gercek bosluk kullanilsin
 uzun = min(24, max(S.MIN_LOOKBACK_H, int(10 * 3600 // 3600) + 1))
 check("10 saatlik kesinti → 11 saat geriye bak", uzun == 11, uzun)
+
+print("\n[4b] YÜKLEME TARAMASI SEYREK, CANLI HER TICK")
+# YouTube datacenter IP'yi istek HACMINE gore bot isaretliyor; yorum videosunun
+# 5 dk yerine 30 dk'da fark edilmesi bir sey kaybettirmez.
+say = {"live": 0, "video": 0}
+import services.youtube as _Y
+_esk = (_Y.fetch_live_streams, _Y.fetch_channel_videos, S.is_live_seen,
+        S.is_video_completed, S.mark_live_seen, S.set_live_wait, S.log_event)
+_Y.fetch_live_streams = lambda *a, **k: (say.__setitem__("live", say["live"] + 1), CANLI)[1]
+_Y.fetch_channel_videos = lambda *a, **k: (say.__setitem__("video", say["video"] + 1), VIDEOLAR)[1]
+S.is_live_seen = lambda v: True          # işaretleme yapma, sadece çağrı say
+S.is_video_completed = lambda v: False
+S.mark_live_seen = lambda *a, **k: None
+S.set_live_wait = lambda v: None
+S.log_event = lambda *a, **k: None
+try:
+    for t in range(S.VIDEO_TAB_EVERY_N_TICK):
+        S._discover({"channels": ["u"]}, 24, {}, content_type="all", tick_no=t)
+finally:
+    (_Y.fetch_live_streams, _Y.fetch_channel_videos, S.is_live_seen,
+     S.is_video_completed, S.mark_live_seen, S.set_live_wait, S.log_event) = _esk
+check(f"canlı her tick ({S.VIDEO_TAB_EVERY_N_TICK} tick → {say['live']})",
+      say["live"] == S.VIDEO_TAB_EVERY_N_TICK, say)
+check(f"yükleme yalnız 1 kez ({say['video']})", say["video"] == 1, say)
 
 print("\n[5] AYAR ALT SINIRLARI OKUMA yolunda da uygulanmalı")
 a = _merge_auto_scan({"interval_min": 1, "day_interval_min": 1, "content_type": "live"})

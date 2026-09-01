@@ -66,8 +66,14 @@ def _epoch_to_eff_iso(epoch, tz):
 # bittikten sonra da yakalanabilsin diye.
 MIN_LOOKBACK_H = 6
 
+# Sıradan yüklemeler HER tick'te taranmaz. Canlı yayın dakikalar içinde
+# yakalanmalı, ama bir yorum videosunun 5 dakika yerine yarım saatte fark
+# edilmesi hiçbir şey kaybettirmez. Kanal başına tick başına 1 istek daha
+# demekti; YouTube datacenter IP'yi istek HACMİNE göre bot işaretliyor.
+VIDEO_TAB_EVERY_N_TICK = 6
 
-def _discover(cfg, lookback, state, content_type="all"):
+
+def _discover(cfg, lookback, state, content_type="all", tick_no=0):
     """Tüm kanallarda son `lookback` saatteki içerikleri keşfet, yenileri
     live_seen'e işle. Her kanal için sonuç loglanır (Durum paneli).
 
@@ -85,7 +91,9 @@ def _discover(cfg, lookback, state, content_type="all"):
     channels = cfg.get("channels", [])
     known = live_seen_ids()   # bilinenleri tek seferde al → tekrar tarih sorgusu yok
     want_live = content_type in ("all", "live")
-    want_video = content_type in ("all", "video")
+    # 'video' seçiliyse her tick'te bak (başka kaynak yok); 'all' ise seyrek.
+    want_video = content_type == "video" or (
+        content_type == "all" and tick_no % VIDEO_TAB_EVERY_N_TICK == 0)
     new_count = 0
     for url in channels:
         cid = channel_id_from_url(url)
@@ -107,7 +115,10 @@ def _discover(cfg, lookback, state, content_type="all"):
             try:
                 # tabs=["videos"]: yalnız yüklemeler sekmesi → kanal başına TEK
                 # istek. Tüm sekmeleri çekmek tick başına 4 katı yük demekti.
-                res = fetch_channel_videos(url, last_hours=lookback,
+                # Seyrek tarandığı için pencere geniş tutulur: iki yükleme
+                # taraması arası geçen süre pencerenin dışında kalmasın.
+                vid_lookback = max(lookback, MIN_LOOKBACK_H)
+                res = fetch_channel_videos(url, last_hours=vid_lookback,
                                            content_type="video", tabs=["videos"])
                 cname = res.get("channel_name") or cname
                 for v in res.get("videos", []):
@@ -275,7 +286,10 @@ def _tick(cfg, asc, eff_now, day_key):
         gap_h = int(gap_s // 3600) + 1          # kesme yukarı yuvarlansın
         lookback = min(lookback, max(MIN_LOOKBACK_H, gap_h))
 
-    _discover(cfg, lookback, state, content_type=asc.get("content_type", "all"))
+    tick_no = int(state.get("tick_no") or 0)
+    state["tick_no"] = tick_no + 1
+    _discover(cfg, lookback, state,
+              content_type=asc.get("content_type", "all"), tick_no=tick_no)
     state["last_discovery_ts"] = int(time.time())
     state["first_done"] = True
 
