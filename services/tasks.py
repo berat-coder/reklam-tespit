@@ -195,7 +195,75 @@ def _log_seek_error(raw):
     print(f"[VIDEO] ffmpeg seek hatası: {line}")
 
 
-def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
+def _stream_url_ok(url, headers=None, timeout=10):
+    """Seçilen akış URL'si GERÇEKTEN çekilebiliyor mu? İlk 1 KB istenir.
+
+    Bir client URL DÖNDÜRÜP o URL 403 verebiliyor. Üretimde ölçüldü
+    (xn6yUkD2hGg): mweb itag 18 URL'si veriyor ama googlevideo 403 Forbidden
+    diyor; aynı videoda tv_simply'nin URL'si sorunsuz kare veriyor. İstemci
+    sırasında mweb önce geldiği için kod çalışmayan URL'yi kabul edip aramayı
+    durduruyordu → "Frame çıkarılamadı" (üretimde 52 kayıt). "URL bulundu"
+    ile "URL çalışıyor" aynı şey değil.
+
+    Döner: (ok, sebep)."""
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(url)
+    req.add_header("Range", "bytes=0-1023")
+    for k, v in (headers or {}).items():
+        if v and k.lower() not in ("host", "range", "accept-encoding", "connection"):
+            try:
+                req.add_header(k, str(v))
+            except (ValueError, TypeError):
+                pass
+    # Mevcut _ffmpeg_proxy_args ile aynı kaynak: ortam değişkeni.
+    proxy = os.environ.get("YT_PROXY", "").strip()
+    try:
+        opener = (urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+            if proxy else urllib.request.build_opener())
+        with opener.open(req, timeout=timeout) as r:
+            code = getattr(r, "status", None) or r.getcode()
+            return code in (200, 206), f"HTTP {code}"
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, type(e).__name__
+
+
+def _ffmpeg_header_args(headers):
+    """yt-dlp'nin o format için ürettiği HTTP başlıklarını ffmpeg'e aktar.
+
+    KRİTİK: bunlar aktarılmadığında ffmpeg kendi varsayılan kimliğiyle
+    (Lavf/...) istek atıyor ve YouTube'un kenar sunucusu, tarayıcı istemcisi
+    için üretilmiş URL'ye 403 döndürüyor. Üretimde ölçülen hata birebir buydu:
+    "Frame çıkarılamadı — ffmpeg: Error opening input files: Server returned
+    403 Forbidden (access denied)" — 52 kayıt bu sebeple battı.
+
+    Host/Range/Accept-Encoding ffmpeg'in kendi işi; onları geçmiyoruz."""
+    if not headers:
+        return []
+    ua = ""
+    other = {}
+    for k, v in headers.items():
+        if not v:
+            continue
+        kl = k.lower()
+        if kl == "user-agent":
+            ua = str(v)
+        elif kl in ("host", "range", "accept-encoding", "connection"):
+            continue
+        else:
+            other[k] = str(v)
+    args = []
+    if ua:
+        args += ["-user_agent", ua]
+    if other:
+        args += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in other.items())]
+    return args
+
+
+def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True, headers=None):
     """Tek bir zaman noktasından `-ss` (input seek = HTTP range) ile 1 frame çeker.
     Tüm videoyu indirmez — sadece o anın etrafındaki byte'ları indirir.
 
@@ -207,6 +275,7 @@ def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error",
         *_ffmpeg_proxy_args(),
+        *_ffmpeg_header_args(headers),
         # Takılan ağ okuması slotu bekletmesin; index + range tek TCP bağlantısını
         # yeniden kullansın; kopan bağlantı sessizce yeniden denensin.
         "-rw_timeout", str(FRAME_SEEK_RW_TIMEOUT_SEC * 1_000_000),
@@ -237,11 +306,13 @@ def _ffmpeg_seek_frame(stream_url, out_path, t, width, fast=True):
 
 
 def _extract_frames_ffmpeg_linear(stream_url, frames_dir, interval, width,
-                                  expected=0, on_progress=None, cancel_check=None):
+                                  expected=0, on_progress=None, cancel_check=None,
+                                  headers=None):
     """Süre bilinmiyorsa (ör. canlı yayın) yedek: tek geçiş fps filtresiyle çıkarır."""
     cmd = [
         "ffmpeg", "-nostdin", "-loglevel", "error", "-an",
         *_ffmpeg_proxy_args(),
+        *_ffmpeg_header_args(headers),
         "-i", stream_url,
         "-vf", f"fps=1/{interval},scale={width}:-2",
         "-q:v", "4",
@@ -272,7 +343,8 @@ def _extract_frames_ffmpeg_linear(stream_url, frames_dir, interval, width,
 
 
 def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
-                           expected=0, on_progress=None, cancel_check=None):
+                           expected=0, on_progress=None, cancel_check=None,
+                           headers=None):
     """Her örnek noktasına PARALEL `-ss` seek ile frame çıkarır — çok hızlı,
     sadece gerekli byte'ları indirir. Süre yoksa lineer fps yöntemine düşer.
     Döner: [(Path, ts_saniye), ...]"""
@@ -281,7 +353,8 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
     if not duration or duration <= 0:
         return _extract_frames_ffmpeg_linear(
             stream_url, frames_dir, interval, width,
-            expected=expected, on_progress=on_progress, cancel_check=cancel_check)
+            expected=expected, on_progress=on_progress, cancel_check=cancel_check,
+            headers=headers)
 
     timestamps = list(range(0, int(duration), interval))
     if not timestamps:
@@ -298,7 +371,7 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
             for idx in indices:
                 out_path = frames_dir / f"frame_{idx + 1:04d}.jpg"
                 futs[ex.submit(_ffmpeg_seek_frame, stream_url, out_path,
-                               timestamps[idx], width, fast)] = idx
+                               timestamps[idx], width, fast, headers)] = idx
             for fut in as_completed(futs):
                 idx = futs[fut]
                 p = fut.result()
@@ -419,14 +492,15 @@ def _extract_frames_opencv(stream_url, frames_dir, interval, width,
 
 
 def _extract_frames(stream_url, frames_dir, interval, width, duration=0,
-                    expected=0, on_progress=None, cancel_check=None):
+                    expected=0, on_progress=None, cancel_check=None, headers=None):
     reset_seek_errors()   # hata sayacı her VİDEO için sıfırlanır
     if shutil.which("ffmpeg"):
         try:
             res = _extract_frames_ffmpeg(stream_url, frames_dir, interval, width,
                                          duration=duration, expected=expected,
                                          on_progress=on_progress,
-                                         cancel_check=cancel_check)
+                                         cancel_check=cancel_check,
+                                         headers=headers)
             if res:
                 return res
             print("[VIDEO] ffmpeg 0 frame döndü, opencv'ye düşülüyor")
@@ -786,9 +860,10 @@ def _analyze_video_core(
         # KÜÇÜLTÜLÜR (upscale değil) → metin keskin kalır. Bant genişliği artar
         # ama analiz normal internet bağlantısındaki işçide çalışıyor.
         if not si:
-            return None, 0, 0, False
+            return None, 0, 0, False, None
         if si.get("url"):
-            return si["url"], 1, si.get("height") or 0, False
+            return (si["url"], 1, si.get("height") or 0, False,
+                    si.get("http_headers"))
         fmts = si.get("formats") or []
         cand = [f for f in fmts
                 if f.get("url") and f.get("vcodec") not in (None, "none")]
@@ -796,8 +871,9 @@ def _analyze_video_core(
             # DASH birleşik → video parçası
             for rf in (si.get("requested_formats") or []):
                 if rf.get("vcodec") not in (None, "none") and rf.get("url"):
-                    return rf["url"], len(fmts), rf.get("height") or 0, False
-            return None, len(fmts), 0, False
+                    return (rf["url"], len(fmts), rf.get("height") or 0, False,
+                            rf.get("http_headers") or si.get("http_headers"))
+            return None, len(fmts), 0, False, None
         # ── HLS'i ELE: ffmpeg `-ss` seek'i HLS manifest'inde çalışmıyor.
         # Üretimde ölçüldü: itag 96 (HLS) seçilince her seek
         # "Error when loading first segment" + "Invalid data found when
@@ -820,9 +896,11 @@ def _analyze_video_core(
         ge = [f for f in pool_all if (f.get("height") or 0) >= target]
         if ge:
             ge.sort(key=lambda f: ((f.get("height") or 0), (f.get("tbr") or 1e9)))
-            return ge[0]["url"], len(fmts), ge[0].get("height") or 0, hls_only
+            return (ge[0]["url"], len(fmts), ge[0].get("height") or 0, hls_only,
+                    ge[0].get("http_headers") or si.get("http_headers"))
         pool_all.sort(key=lambda f: (-(f.get("height") or 0), (f.get("tbr") or 1e9)))
-        return pool_all[0]["url"], len(fmts), pool_all[0].get("height") or 0, hls_only
+        return (pool_all[0]["url"], len(fmts), pool_all[0].get("height") or 0,
+                hls_only, pool_all[0].get("http_headers") or si.get("http_headers"))
 
     class _YdlLog:
         """yt-dlp'nin uyarılarını yakalar. Asıl ret sebebi (bot kontrolü,
@@ -840,6 +918,7 @@ def _analyze_video_core(
             self.msgs.append(str(m))
 
     stream_url = None
+    sheaders = None
     _last_err = None
     _weak = [None]      # yalnız-HLS sonucu: son çare olarak saklanır
     _diag = []          # her client'ın sonucu — hepsi tek mesajda gösterilir
@@ -872,7 +951,7 @@ def _analyze_video_core(
                 "extractor_args": {"youtube": {"player_client": _clients}},
             })) as ydl:
                 si = ydl.extract_info(url, download=False)
-            stream_url, nfmt, sheight, hls_only = _pick_stream_url(si)
+            stream_url, nfmt, sheight, hls_only, sheaders = _pick_stream_url(si)
             # ZAYIF SONUÇ: yalnız HLS bulunduysa kabul ETME, diğer client'ları
             # dene. Üretimde ölçüldü: web_safari tek bir HLS formatı (itag 96)
             # döndürüyor, ffmpeg seek onu okuyamıyor ("Error when loading first
@@ -880,10 +959,23 @@ def _analyze_video_core(
             # veriyordu. İlk cevap veren client'ı kabul etmek hatalıydı.
             if stream_url and hls_only:
                 if _weak[0] is None:
-                    _weak[0] = (stream_url, nfmt, sheight, cname)
+                    _weak[0] = (stream_url, nfmt, sheight, cname, sheaders)
                 status(f"{cname}: yalnız HLS bulundu (seek uyumsuz) — "
                        f"diğer client'lar deneniyor")
                 stream_url = None
+            # ÇEKİLEBİLİRLİK DOĞRULAMASI: URL'nin varlığı yetmez. 1 KB'lik
+            # deneme isteği 403 dönerse bu client'ı kabul etme, sıradakini dene.
+            # Bu adım olmadan mweb'in 403'lü URL'si tv_simply'nin çalışan
+            # URL'sinin önüne geçiyordu.
+            if stream_url and not hls_only:
+                ok, why = _stream_url_ok(stream_url, sheaders)
+                if not ok:
+                    if _weak[0] is None:
+                        _weak[0] = (stream_url, nfmt, sheight, cname, sheaders)
+                    status(f"{cname}: URL var ama çekilemiyor ({why}) — "
+                           f"diğer client'lar deneniyor")
+                    _diag.append(f"{cname}[url-{why.replace(' ', '')}]")
+                    stream_url = None
             if stream_url:
                 # Seçilen KAYNAK çözünürlüğü loglanır: köşe logolarının marka
                 # yazısının okunabilmesi buna bağlı (düşükse tespit tahmine döner)
@@ -914,9 +1006,9 @@ def _analyze_video_core(
     if not stream_url and _weak[0]:
         # Hiçbir client DASH vermedi → son çare olarak HLS'i dene (0 kare
         # riski var ama hiç denememekten iyi).
-        stream_url, nfmt, sheight, wname = _weak[0]
+        stream_url, nfmt, sheight, wname, sheaders = _weak[0]
         status(f"Stream OK (client={wname}, kaynak={sheight or '?'}p, "
-               f"YALNIZ HLS — seek başarısız olabilir)")
+               f"ZAYIF kaynak — HLS ya da doğrulanamayan URL, kare gelmeyebilir)")
 
     if not stream_url:
         msg = ("Stream URL bulunamadı — TÜM CLIENT'LAR: "
@@ -956,6 +1048,7 @@ def _analyze_video_core(
             stream_url, job_frames_dir, interval, FRAME_WIDTH,
             duration=duration, expected=expected_frames,
             on_progress=_extract_progress, cancel_check=cancel_check,
+            headers=sheaders,
         )
     except Exception as e:
         status(f"Frame çıkarma hatası: {e}")

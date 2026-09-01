@@ -304,12 +304,20 @@ def next_pending_live(max_attempts=4):
     budama TTL'ine takılıp sessizce siliniyordu."""
     cut = _retry_cutoff(30)
     with get_db() as conn:
+        # ÖNCELİK: 'pending' (yeni keşfedilen) her zaman 'failed' yeniden
+        # denemelerinin ÖNÜNDE. Tek sıralama seen_at ASC olduğu için günler
+        # önceki başarısız kayıtlar bugünkü taze içeriğin önüne geçiyordu:
+        # üretimde 13 taze 'pending' beklerken analiz slotlarını 27-28 Ağustos
+        # tarihli başarısız kayıtlar tüketiyordu. Grup içinde FIFO korunur —
+        # böylece eski 'pending' kayıtlar da sıra alamadan budanmaz.
         row = conn.execute("""
             SELECT * FROM live_seen
             WHERE status = 'pending'
                OR (status = 'failed' AND attempts < ?
                    AND (last_attempt IS NULL OR last_attempt < ?))
-            ORDER BY seen_at ASC LIMIT 1
+            ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                     seen_at ASC
+            LIMIT 1
         """, (max_attempts, cut)).fetchone()
         return dict(row) if row else None
 
