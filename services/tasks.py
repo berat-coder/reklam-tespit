@@ -34,7 +34,7 @@ from models.database import (
     upsert_channel, upsert_video, save_detections,
     get_channel, is_video_completed, update_channel_logos,
     log_event, mark_live_status, mark_live_seen, set_live_wait,
-    get_live_attempts, _exposure_map,
+    get_live_attempts, _exposure_map, kv_get, kv_set,
 )
 
 
@@ -193,6 +193,70 @@ def _log_seek_error(raw):
         _seek_errs["lines"].append(line)
         _seek_errs["n"] += 1
     print(f"[VIDEO] ffmpeg seek hatası: {line}")
+
+
+# ── YouTube hız sınırı (bot-flag / 429) geri çekilmesi ───────────────────────
+# Railway'in datacenter IP'si belirli bir istek hacminden sonra YouTube
+# tarafından bot olarak işaretleniyor: tüm client'lar "Sign in to confirm
+# you're not a bot" + 0 format döndürüyor, biri de HTTP 429 alıyor.
+# ÖLÇÜLDÜ (2026-09-01): aynı videolar yerel bağlantıdan PO token olmadan bile
+# sorunsuz çekiliyor → video erişilebilir, engel IP kaynaklı ve hacme bağlı.
+#
+# Sistem bunu KENDİ KENDİNE derinleştiriyordu: bir video bot-flag alınca kod
+# kalan 6 client'ı da deniyor (hepsi aynı cevabı alıyor) ve sıradaki videoya
+# geçip yine 7 istek atıyordu. Logda 4 dakikada 3 video × 7 = 21 işaretli istek.
+_RATE_PAT = re.compile(
+    r"sign in to confirm|not a bot|http error 429|too many requests", re.I)
+_COOLDOWN_KEY = "yt_rate_limit"
+def _cd_env(name, default):
+    try:
+        return max(60, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+YT_COOLDOWN_BASE = _cd_env("YT_COOLDOWN_BASE_SEC", 600)      # ilk bekleme 10 dk
+YT_COOLDOWN_MAX = _cd_env("YT_COOLDOWN_MAX_SEC", 7200)       # tavan 2 saat
+
+
+def is_rate_limit_msg(msg):
+    """Mesaj YouTube'un bot-flag/429 cevabı mı?"""
+    return bool(_RATE_PAT.search(msg or ""))
+
+
+def yt_cooldown_remaining():
+    """Bot-flag sonrası kalan bekleme (sn); 0 ise serbest."""
+    try:
+        st = kv_get(_COOLDOWN_KEY, {}) or {}
+        return max(0, int(float(st.get("until") or 0) - time.time()))
+    except Exception:
+        return 0
+
+
+def note_rate_limit():
+    """Bot-flag/429 görüldü → üstel geri çekilme başlat. Döner: bekleme (sn)."""
+    try:
+        st = kv_get(_COOLDOWN_KEY, {}) or {}
+        streak = int(st.get("streak") or 0) + 1
+    except Exception:
+        streak = 1
+    wait = min(YT_COOLDOWN_MAX, YT_COOLDOWN_BASE * (2 ** (streak - 1)))
+    try:
+        kv_set(_COOLDOWN_KEY, {"until": time.time() + wait, "streak": streak})
+    except Exception:
+        pass
+    print(f"[VIDEO] YouTube hız sınırı ({streak}. kez) — {wait // 60} dk "
+          f"boyunca YouTube isteği yapılmayacak")
+    return wait
+
+
+def clear_rate_limit():
+    """Başarılı çekimden sonra geri çekilmeyi sıfırla."""
+    try:
+        if (kv_get(_COOLDOWN_KEY, {}) or {}).get("streak"):
+            kv_set(_COOLDOWN_KEY, {"until": 0, "streak": 0})
+    except Exception:
+        pass
 
 
 def _stream_url_ok(url, headers=None, timeout=10):
@@ -979,6 +1043,7 @@ def _analyze_video_core(
             if stream_url:
                 # Seçilen KAYNAK çözünürlüğü loglanır: köşe logolarının marka
                 # yazısının okunabilmesi buna bağlı (düşükse tespit tahmine döner)
+                clear_rate_limit()      # çalışıyoruz → geri çekilme sıfırlansın
                 status(f"Stream OK (client={cname}, kaynak={sheight or '?'}p, "
                        f"format sayısı={nfmt})")
                 if sheight and sheight < SOURCE_MIN_HEIGHT:
@@ -997,11 +1062,25 @@ def _analyze_video_core(
                          f"URL'siz video={len(nourl)} → {warn}")
             _diag.append(f"{cname}[f{len(fmts)}/v{len(vids)}/nourl{len(nourl)}] {warn[:110]}")
             status(_last_err)
+            # HIZ SINIRI: bot-flag/429 alındıysa KALAN client'ları deneme.
+            # Hepsi aynı cevabı verir; 7 istek atmak yalnız engeli derinleştirir
+            # (üretim logu: 4 dakikada 3 video × 7 = 21 işaretli istek).
+            if is_rate_limit_msg(warn) or is_rate_limit_msg(_last_err):
+                bekle = note_rate_limit()
+                _last_err = (f"YouTube hız sınırı (bot doğrulaması / 429) — "
+                             f"{bekle // 60} dk beklenecek. Son: {_last_err[:150]}")
+                status(_last_err)
+                break
         except Exception as e:
             warn = " | ".join(m[:180] for m in log.msgs[-2:])
             _last_err = f"{cname}: {str(e)[:200]}" + (f" | {warn}" if warn else "")
             _diag.append(f"{cname}[HATA] {(str(e) or warn)[:110]}")
             status(f"Stream client={cname} başarısız → {_last_err[:240]}")
+            if is_rate_limit_msg(str(e)) or is_rate_limit_msg(warn):
+                bekle = note_rate_limit()
+                _last_err = (f"YouTube hız sınırı (bot doğrulaması / 429) — "
+                             f"{bekle // 60} dk beklenecek. Son: {_last_err[:150]}")
+                break
 
     if not stream_url and _weak[0]:
         # Hiçbir client DASH vermedi → son çare olarak HLS'i dene (0 kare

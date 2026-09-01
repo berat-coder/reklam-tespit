@@ -227,6 +227,16 @@ def _analyze_one(asc, state):
 
 
 def _tick(cfg, asc, eff_now, day_key):
+    # YouTube bot-flag/429 sonrası soğuma: keşif de analiz de durur. Aksi halde
+    # sistem tam da geri çekilmesi gereken anda YouTube'u dövmeye devam ediyor
+    # ve engel derinleşiyordu.
+    from services.tasks import yt_cooldown_remaining
+    kalan = yt_cooldown_remaining()
+    if kalan > 0:
+        print(f"[OTO-TARAMA] YouTube hız sınırı — {kalan // 60} dk {kalan % 60} sn "
+              f"daha beklenecek (keşif ve analiz duraklatıldı)")
+        return None
+
     state = kv_get(_STATE_KEY, {}) or {}
     # Eski state 'night_key' kullanıyordu — bir kez day_key'e taşı
     if state.get("day_key") is None and state.get("night_key"):
