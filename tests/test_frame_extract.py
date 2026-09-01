@@ -72,7 +72,10 @@ check("boşluklar onarımda tamamlandı", got == N, f"{got}/{N}")
 check("onarım ek çağrı yaptı", calls > N, f"{calls} çağrı")
 
 print("\n[4] ÇOĞUNLUK BOŞ (%80) ama yoklama geçti → onarım ATLANIR")
-probe = sorted({int(i * (N - 1) / 3) for i in range(4)})
+# Yoklama noktaları üretim koduyla AYNI formülden türetilmeli; sabit kopya
+# yazmak, formül değişince testi sessizce yanlış yere bakar hale getiriyordu.
+_son = int((N - 1) * 0.9)
+probe = sorted({int(i * _son / 3) for i in range(4)})
 got, calls = run(lambda i, fast: i in probe or i % 5 == 0)
 check("alınan kareler korundu", got > 0, got)
 check("onarım atlandı (çağrı ≈ nokta sayısı)", calls <= N + 2, f"{calls} çağrı")
