@@ -32,7 +32,7 @@ def run(should_succeed):
     gerçekte de tam bu yüzden hızlı modda boş kalan kareleri kurtarabiliyor."""
     calls = {"n": 0}
 
-    def fake_seek(url, out_path, t, width, fast=True):
+    def fake_seek(url, out_path, t, width, fast=True, headers=None):
         calls["n"] += 1
         idx = t // INT
         if should_succeed(idx, fast):

@@ -18,7 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Uretim Postgres'ine BAGLANMA: bos string environ'da kaldigi icin
 # config.py'nin load_dotenv() cagrisi DATABASE_URL'i geri yukleyemez.
 os.environ["DATABASE_URL"] = ""
-os.environ["DB_PATH"] = tempfile.mktemp(suffix=".db")
+# DİKKAT: SQLite yolunu DATA_DIR belirliyor, DB_PATH DEĞİL. DB_PATH vermek
+# testi deponun kendi data.db'sine yazdırıyordu (satırlar kalıcı oluyor ve
+# ikinci koşuda testi bozuyordu).
+_TMPDIR = tempfile.mkdtemp(prefix="rt-test-")
+os.environ["DATA_DIR"] = _TMPDIR
 os.environ["AUTO_SCAN_ENABLED"] = "0"
 
 import app as _a                                                  # noqa: E402,F401
@@ -117,9 +121,7 @@ check("Host/Range elendi", "Host" not in " ".join(a) and "Range" not in " ".join
 check("boş değer atlandı", "Cookie" not in " ".join(a), a)
 check("başlık yoksa argüman yok", T._ffmpeg_header_args(None) == [])
 
-try:
-    os.remove(os.environ["DB_PATH"])
-except OSError:
-    pass
+import shutil
+shutil.rmtree(_TMPDIR, ignore_errors=True)
 print("\n" + ("TÜM TESTLER GEÇTİ" if ok else "BAŞARISIZ"))
 sys.exit(0 if ok else 1)
