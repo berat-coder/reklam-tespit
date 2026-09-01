@@ -293,9 +293,13 @@ def _retry_cutoff(minutes=30):
     return (datetime.utcnow() - __import__("datetime").timedelta(minutes=minutes)).isoformat()
 
 
-def next_pending_live(max_attempts=3):
+def next_pending_live(max_attempts=4):
     """Analize gönderilecek sıradaki canlı yayın:
     status='pending' VEYA (status='failed' & attempts<max & son deneme 30dk+ önce).
+
+    max_attempts 3→4: sayaç eskiden bir gerçek deneme için 2 artıyordu (kuyruğa
+    alma +1, hata +1), yani "attempts<3" pratikte TEK denemeye izin veriyordu.
+    Çift artış kaldırıldı; eşik artık gerçekten 4 deneme demek.
     FIFO (seen_at ASC) — en yeni önce olsaydı eski bekleyenler sıra alamadan
     budama TTL'ine takılıp sessizce siliniyordu."""
     cut = _retry_cutoff(30)

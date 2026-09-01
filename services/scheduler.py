@@ -62,28 +62,69 @@ def _epoch_to_eff_iso(epoch, tz):
 
 # ── Keşif + analiz ─────────────────────────────────────────────────────────────
 
-def _discover(cfg, lookback, state):
-    """Tüm kanallarda SON `lookback` saatteki canlı yayınları keşfet, yeni
-    olanları live_seen'e işle. Her kanal için sonuç loglanır (Durum paneli)."""
-    from services.youtube import fetch_live_streams, channel_id_from_url
+# Artımlı keşif penceresi bu saatin altına DÜŞEMEZ. Uzun yayınlar
+# bittikten sonra da yakalanabilsin diye.
+MIN_LOOKBACK_H = 6
+
+
+def _discover(cfg, lookback, state, content_type="all"):
+    """Tüm kanallarda son `lookback` saatteki içerikleri keşfet, yenileri
+    live_seen'e işle. Her kanal için sonuç loglanır (Durum paneli).
+
+    content_type: 'live' → yalnız canlı yayınlar, 'video' → yalnız sıradan
+    yüklemeler, 'all' → ikisi.
+
+    ÖNEMLİ: bu fonksiyon eskiden content_type'ı HİÇ okumuyordu ve yalnız
+    fetch_live_streams çağırıyordu. Yani otomatik sistem sıradan videoları
+    hiçbir zaman taramadı. Ölçüm (2026-09-01): takip edilen 11 kanalda son 24
+    saatte 9 video yayınlanmış, 8'i sistemde hiç yoktu — hepsi canlı olmayan
+    yüklemelerdi. Kullanıcının "videoları taramıyor" şikayetinin ana sebebi."""
+    from services.youtube import (fetch_live_streams, fetch_channel_videos,
+                                  channel_id_from_url)
     from models.database import live_seen_ids
     channels = cfg.get("channels", [])
     known = live_seen_ids()   # bilinenleri tek seferde al → tekrar tarih sorgusu yok
+    want_live = content_type in ("all", "live")
+    want_video = content_type in ("all", "video")
     new_count = 0
     for url in channels:
-        try:
-            res = fetch_live_streams(url, last_hours=lookback, known_ids=known)
-        except Exception as e:
-            print(f"[OTO-TARAMA] keşif hata ({url}): {e}")
-            code, _ = _classify(str(e))
-            log_event("channel_scan", url, "error", code, str(e)[:200])
-            continue
         cid = channel_id_from_url(url)
-        cname = res.get("channel_name") or cid
+        cname = cid
+        bulunan = {}          # video_id → kayıt (iki kaynak çakışırsa tekille)
+        hata = None
+
+        if want_live:
+            try:
+                res = fetch_live_streams(url, last_hours=lookback, known_ids=known)
+                cname = res.get("channel_name") or cname
+                for v in res.get("videos", []):
+                    if v.get("id"):
+                        bulunan[v["id"]] = v
+            except Exception as e:
+                hata = e
+
+        if want_video:
+            try:
+                # tabs=["videos"]: yalnız yüklemeler sekmesi → kanal başına TEK
+                # istek. Tüm sekmeleri çekmek tick başına 4 katı yük demekti.
+                res = fetch_channel_videos(url, last_hours=lookback,
+                                           content_type="video", tabs=["videos"])
+                cname = res.get("channel_name") or cname
+                for v in res.get("videos", []):
+                    if v.get("id") and v["id"] not in bulunan:
+                        bulunan[v["id"]] = v
+            except Exception as e:
+                hata = hata or e
+
+        if hata is not None and not bulunan:
+            print(f"[OTO-TARAMA] keşif hata ({url}): {hata}")
+            code, _ = _classify(str(hata))
+            log_event("channel_scan", url, "error", code, str(hata)[:200])
+            continue
+
         ch_new = 0
-        for v in res.get("videos", []):
-            vid = v.get("id")
-            if not vid or is_live_seen(vid) or is_video_completed(vid):
+        for vid, v in bulunan.items():
+            if is_live_seen(vid) or is_video_completed(vid):
                 continue
             mark_live_seen(vid, channel_id=cid, title=v.get("title", ""),
                            url=v.get("url", ""), analyzed=False)
@@ -93,12 +134,11 @@ def _discover(cfg, lookback, state):
                 set_live_wait(vid)
             ch_new += 1
         new_count += ch_new
-        found = len(res.get("videos", []))
         log_event("channel_scan", cname, "ok", "discover",
-                  f"{found} canlı yayın (son {lookback}s) · {ch_new} yeni")
+                  f"{len(bulunan)} içerik (son {lookback}s, {content_type}) · {ch_new} yeni")
     if new_count:
         state["today_found"] = state.get("today_found", 0) + new_count
-        print(f"[OTO-TARAMA] toplam {new_count} yeni canlı yayın keşfedildi")
+        print(f"[OTO-TARAMA] toplam {new_count} yeni içerik keşfedildi")
     return new_count
 
 
@@ -172,6 +212,10 @@ def _analyze_one(asc, state):
         JOB_MANAGER.add_video(url, channel_id=row.get("channel_id") or None,
                               channel_name="", title=row.get("title") or "")
         # 'queued' + deneme sayacı; başarı/hata'yı _analyze_video_core günceller
+        # Deneme sayacı YALNIZ burada artar. Eskiden hata yolunda da artıyordu
+        # (tasks.py _record_fail) → tek gerçek deneme sayacı 2 artırıyordu ve
+        # next_pending_live'in "attempts < 3" koşulu pratikte 1 denemeye
+        # denk geliyordu. Üretimde 42 kayıt tam attempts=4'te donmuştu.
         mark_live_status(vid, "queued", inc_attempt=True)
         state["today_analyzed"] = state.get("today_analyzed", 0) + 1
         attempt = (row.get("attempts") or 0) + 1
@@ -209,13 +253,19 @@ def _tick(cfg, asc, eff_now, day_key):
     except Exception as e:
         print(f"[OTO-TARAMA] canlı-bekle kontrolü hatası: {e}")
 
-    # İlk keşif 24s; sonrakiler son keşiften beri geçen süre (+1s tampon)
+    # Geriye-bakış penceresi. ARTIMLI daraltma vardı ama tick araligi 1 saatin
+    # altında olduğu için gap_h HER ZAMAN 1 çıkıyordu: üretimde saklanan 300
+    # keşif kaydının 300'ü "(son 1s)" yazıyordu. Pencere filtresi yayının
+    # BAŞLAMA zamanına baktığından, 1 saatten uzun süren bir yayın bittiği anda
+    # pencerenin dışında kalıyor ve bir daha keşfedilemiyordu.
+    # Artık taban var: pencere MIN_LOOKBACK_H'nin altına inmez.
     lookback = int(asc.get("lookback_hours", 24))
     if state.get("first_done") and state.get("last_discovery_ts"):
-        gap_h = int((time.time() - state["last_discovery_ts"]) / 3600) + 1
-        lookback = min(lookback, max(1, gap_h))
+        gap_s = time.time() - state["last_discovery_ts"]
+        gap_h = int(gap_s // 3600) + 1          # kesme yukarı yuvarlansın
+        lookback = min(lookback, max(MIN_LOOKBACK_H, gap_h))
 
-    _discover(cfg, lookback, state)
+    _discover(cfg, lookback, state, content_type=asc.get("content_type", "all"))
     state["last_discovery_ts"] = int(time.time())
     state["first_done"] = True
 

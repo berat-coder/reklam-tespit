@@ -322,7 +322,12 @@ def _extract_frames_ffmpeg(stream_url, frames_dir, interval, width, duration=0,
     # 1 kare + boşa bir Gemini çağrısı + iki tur bant genişliği oldu.
     # Videoya yayılmış birkaç noktayı önce dene: hiçbiri kare vermiyorsa
     # URL bozuk demektir, kalan seek'leri hiç yapma.
-    probe = sorted({int(i * (len(timestamps) - 1) / 3) for i in range(4)}) \
+    # Son yoklama noktası videonun EN SONUNA yapışmasın: bildirilen süre
+    # gerçek akıştan birkaç saniye uzunsa (canlı/DVR kayıtlarında olağan) o
+    # nokta boş döner ve yanlışlıkla "ölü akış" kararına katkı yapar.
+    # Ölçüldü: 858 sn'lik videoda son nokta sona 2 sn kalıyordu. %90'da kes.
+    _son = int((len(timestamps) - 1) * 0.9)
+    probe = sorted({int(i * _son / 3) for i in range(4)}) \
         if len(timestamps) >= 8 else []
     if probe:
         _run_pass(probe, fast=fast, workers=min(len(probe), FRAME_SEEK_WORKERS))
@@ -649,16 +654,20 @@ def _analyze_video_core(
             if kind == "cookie":
                 # TAVAN: pending'e geri koymak sonsuz döngü demek. Tavana
                 # gelindiyse 'failed' yaz → zamanlayıcı bir daha kuyruğa almaz.
+                # inc_attempt YOK: sayaç kuyruğa alınırken (scheduler
+                # _analyze_one) zaten arttı. İkisi birden artırınca tek gerçek
+                # deneme sayacı 2 artıyordu; "attempts < 3" eşiği pratikte TEK
+                # denemeye izin veriyor, kayıtlar attempts=4'te kalıcı mahsur
+                # kalıyordu (üretimde 42 kayıt tam orada donmuştu).
                 if get_live_attempts(target) >= MAX_LIVE_ATTEMPTS:
-                    mark_live_status(target, "failed", inc_attempt=True,
+                    mark_live_status(target, "failed",
                                      error=f"[{MAX_LIVE_ATTEMPTS} deneme aşıldı] {err}")
                 else:
-                    mark_live_status(target, "pending", error=str(err),
-                                     inc_attempt=True)
+                    mark_live_status(target, "pending", error=str(err))
             elif kind == "permanent":
                 mark_live_status(target, "permanent", error=str(err))    # bir daha deneme
             else:
-                mark_live_status(target, "failed", error=str(err), inc_attempt=True)
+                mark_live_status(target, "failed", error=str(err))
 
     # 1. Meta — format yoksa bile title/description alabilmek için ignore_no_formats_error
     try:

@@ -220,12 +220,35 @@ DEFAULT_AUTO_SCAN = {
     "interval_min": _int_env("AUTO_SCAN_INTERVAL_MIN", 15),  # yoğun pencere temposu (dk)
     "day_interval_min": _int_env("AUTO_SCAN_DAY_INTERVAL_MIN", 30),  # pencere dışı tempo (dk)
     "lookback_hours": _int_env("AUTO_SCAN_LOOKBACK_HOURS", 24),  # ilk keşif geriye-bakış
-    "content_type": "live",                                  # sadece canlı yayın
+    "content_type": "all",                                   # canlı yayın + sıradan video
     "daily_cap": _int_env("AUTO_SCAN_DAILY_CAP", 70),        # günlük analiz üst sınırı
     "tz_offset": _int_env("AUTO_SCAN_TZ_OFFSET", 3),         # UTC ofseti (TR=+3) — saat hesabı buna göre
     "live_recheck_min": _int_env("LIVE_RECHECK_MIN", 45),    # canlı yayın "bitti mi" kontrol aralığı (dk)
     "live_wait_ttl_hours": _int_env("LIVE_WAIT_TTL_HOURS", 12),  # 7/24 yayın emniyeti: bu kadar saat sonra vazgeç
 }
+
+
+# Ayar alt sınırları. HEM yazma (POST /api/auto-scan/settings) HEM OKUMA
+# yolunda uygulanır. Yalnız yazmada uygulamak yetmiyordu: /data/config.json'a
+# daha önce kaydedilmiş interval_min=1 değeri okuma yolunda hiç sıkıştırılmadığı
+# için üretimde zamanlayıcı 69 SANİYEDE BİR atıyordu (ölçüldü: aynı kanal için
+# 23 ardışık aralığın hepsi ~69 sn; ayar 15 dk sanılıyordu). 13 kanal × saatte
+# ~52 tick = saatte ~2.000 yt-dlp isteği.
+AUTO_SCAN_MIN = {
+    "interval_min": 5, "day_interval_min": 5, "live_recheck_min": 5,
+    "lookback_hours": 1, "daily_cap": 1, "live_wait_ttl_hours": 1,
+}
+
+
+def clamp_auto_scan(cur):
+    """Alt sınırları uygula (yerinde değiştirir ve döndürür)."""
+    for k, low in AUTO_SCAN_MIN.items():
+        if k in cur:
+            try:
+                cur[k] = max(low, int(cur[k]))
+            except (TypeError, ValueError):
+                cur[k] = DEFAULT_AUTO_SCAN.get(k, low)
+    return cur
 
 
 def _merge_auto_scan(saved):
@@ -239,7 +262,14 @@ def _merge_auto_scan(saved):
         if "daily_cap" not in saved and saved.get("nightly_cap") is not None:
             # Gecelik 30'luk tavan 7/24 çalışmada çok düşük kalır — en az default'a çek
             merged["daily_cap"] = max(int(saved["nightly_cap"]), DEFAULT_AUTO_SCAN["daily_cap"])
-    return merged
+        # ESKİ VARSAYILANIN MİRASI: content_type "live" hiçbir zaman bilinçli bir
+        # tercih olmadı — zamanlayıcı bu alanı zaten hiç okumuyordu, yani kullanıcı
+        # bunu bir ayar olarak deneyimlemedi. Sonuç: otomatik sistem sıradan
+        # videoları HİÇ taramadı (ölçüm: son 24 saatte yayınlanan 9 videonun 8'i
+        # sistemde yok). "all"a taşınıyor; kullanıcı arayüzden geri alabilir.
+        if saved.get("content_type") == "live":
+            merged["content_type"] = "all"
+    return clamp_auto_scan(merged)
 
 
 def load_config():
