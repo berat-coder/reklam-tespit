@@ -1671,15 +1671,35 @@ async function loadAutoScanPanel() {
         stTxt = 'sırada'; icon = 'ti-clock-hour-4'; color = 'var(--amber)';
       }
       const ch = v.channel_name || v.channel_id || '';
+      const canRetry = !done && (v.status === 'failed' || v.status === 'permanent');
+      const retryBtn = canRetry
+        ? `<button class="as-btn admin-only" style="flex-shrink:0;padding:3px 10px;font-size:11px" title="${esc(v.error || '')}" onclick="retryLive(event, '${jsq(v.video_id)}', this)"><i class="ti ti-refresh"></i> Tekrar analiz et</button>`
+        : '';
       return `<div class="lb-row" onclick="${done ? `goVideo('${jsq(v.video_id)}')` : ''}" style="${done?'':'cursor:default'}">
         <i class="ti ${icon}" style="font-size:18px;color:${color};flex-shrink:0"></i>
         <div class="lb-name" style="width:auto;flex:1">${ch ? `<span style="color:var(--dim)">${esc(ch)} · </span>` : ''}${esc(v.title || v.video_id)}</div>
+        ${retryBtn}
         <div class="lb-meta">${fmtTRTime(v.seen_at)} · ${stTxt}</div>
       </div>`;
     }).join('');
   }
   html += `</div>`;
   box.innerHTML = html;
+}
+
+async function retryLive(ev, videoId, btn) {
+  ev.stopPropagation();
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2"></i> Sıraya alınıyor...'; }
+  try {
+    const j = await (await fetch(`/api/live/${encodeURIComponent(videoId)}/retry`, {method:'POST'})).json();
+    if (j.error) { toast('Hata: ' + j.error, 'error'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-refresh"></i> Tekrar analiz et'; } return; }
+    toast('Yeniden analiz sırasına alındı — sıradaki tarama döngüsünde işlenecek', 'success', 6000);
+  } catch (e) {
+    toast('İstek hatası', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-refresh"></i> Tekrar analiz et'; }
+    return;
+  }
+  loadAutoScanPanel();
 }
 
 async function runAutoScanNow(btn) {

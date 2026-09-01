@@ -260,6 +260,23 @@ def mark_live_status(video_id, status, error="", inc_attempt=False):
             """, (status, error or "", analyzed, video_id))
 
 
+def reset_live_for_retry(video_id):
+    """Başarısız/kalıcı bir canlı yayını elle yeniden analiz sırasına hazırla:
+    status='pending' + hata/deneme sayacı sıfırlanır → zamanlayıcı ilk tick'te
+    'pending' önceliğiyle alır. Yalnız failed/permanent kayıtlar sıfırlanır;
+    done/queued/live_wait kayıtlara dokunulmaz. Döner: satır güncellendi mi."""
+    if not video_id:
+        return False
+    with get_db() as conn:
+        cur = conn.execute("""
+            UPDATE live_seen
+            SET status = 'pending', error = '', attempts = 0,
+                last_attempt = NULL, analyzed = 0
+            WHERE video_id = ? AND status IN ('failed', 'permanent')
+        """, (video_id,))
+        return cur.rowcount > 0
+
+
 def live_seen_ids():
     """Bilinen tüm canlı yayın id'leri (keşifte tekrar tarih sorgusunu önlemek için)."""
     with get_db() as conn:

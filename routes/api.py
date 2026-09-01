@@ -415,6 +415,18 @@ def auto_scan_status():
     return jsonify(st)
 
 
+@api_bp.route("/api/live/<video_id>/retry", methods=["POST"])
+def retry_live(video_id):
+    """Başarısız canlı yayını elle yeniden analiz sırasına al (yönetici,
+    before_request POST'u zorlar). Deneme sayacı sıfırlanır ki tavana takılmış
+    kayıtlar da tekrar şans bulsun."""
+    from models.database import reset_live_for_retry
+    if not reset_live_for_retry(video_id):
+        return jsonify({"error": "Kayıt yeniden denenebilir durumda değil "
+                                 "(yalnız 'başarısız' kayıtlar)"}), 404
+    return jsonify({"ok": True})
+
+
 @api_bp.route("/api/health")
 def health_endpoint():
     """Sistem sağlığı: cookie durumu, son başarılı tarama, son 24s hata."""
