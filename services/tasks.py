@@ -788,6 +788,13 @@ def _analyze_video_core(
         code, kind = _classify_error(str(err))
         log_event("video", label_box[0], "error", code, str(err))
         target = vid or vid_guess
+        # ORTAM ENGELİ videonun deneme bütçesini HARCAMAMALI. Hız sınırı
+        # videoyla ilgili değil; sayaç kuyruğa alınırken artıyor ve geri
+        # alınmazsa birkaç saatlik IP engeli kuyruktaki HER videoyu kalıcı
+        # mahsur bırakıyor. 'pending' kalır → soğuma bitince yeniden denenir.
+        if target and is_rate_limit_msg(str(err)):
+            mark_live_status(target, "pending", error=str(err), dec_attempt=True)
+            return
         if target:
             if kind == "cookie":
                 # TAVAN: pending'e geri koymak sonsuz döngü demek. Tavana
@@ -986,6 +993,7 @@ def _analyze_video_core(
     _last_err = None
     _weak = [None]      # yalnız-HLS sonucu: son çare olarak saklanır
     _diag = []          # her client'ın sonucu — hepsi tek mesajda gösterilir
+    _rl = [0]           # hız sınırı nedeniyle erken durduysak bekleme (sn)
     # CLIENT SIRASI — ölçüme göre (yt-dlp 2026.8.19 + deno/EJS ile):
     #   web_safari → TAM DASH [144…1080], PO token'a bile gerek yok  ← kazanan
     #   mweb, tv_simply → çalışır ama GVS PO token ister (bgutil verebilir)
@@ -1067,6 +1075,7 @@ def _analyze_video_core(
             # (üretim logu: 4 dakikada 3 video × 7 = 21 işaretli istek).
             if is_rate_limit_msg(warn) or is_rate_limit_msg(_last_err):
                 bekle = note_rate_limit()
+                _rl[0] = bekle
                 _last_err = (f"YouTube hız sınırı (bot doğrulaması / 429) — "
                              f"{bekle // 60} dk beklenecek. Son: {_last_err[:150]}")
                 status(_last_err)
@@ -1078,6 +1087,7 @@ def _analyze_video_core(
             status(f"Stream client={cname} başarısız → {_last_err[:240]}")
             if is_rate_limit_msg(str(e)) or is_rate_limit_msg(warn):
                 bekle = note_rate_limit()
+                _rl[0] = bekle
                 _last_err = (f"YouTube hız sınırı (bot doğrulaması / 429) — "
                              f"{bekle // 60} dk beklenecek. Son: {_last_err[:150]}")
                 break
@@ -1090,9 +1100,19 @@ def _analyze_video_core(
                f"ZAYIF kaynak — HLS ya da doğrulanamayan URL, kare gelmeyebilir)")
 
     if not stream_url:
-        msg = ("Stream URL bulunamadı — TÜM CLIENT'LAR: "
-               + " ;; ".join(_diag)) if _diag else \
-              f"Stream URL bulunamadı — {_last_err or 'hiçbir client format vermedi'}"
+        # "TÜM CLIENT'LAR" demek YANILTICI oluyordu: hız sınırında bilerek İLK
+        # client'tan sonra duruyoruz, ama mesaj yedi client denenmiş gibi
+        # görünüyordu ve sistem olduğundan bozuk okunuyordu.
+        if _rl[0]:
+            msg = (f"YouTube hız sınırı — IP geçici olarak bot sayıldı. "
+                   f"{_rl[0] // 60} dk sonra otomatik tekrar denenecek "
+                   f"(kalan client'lar boşa istek atmamak için denenmedi). "
+                   f"Denenen: {' ;; '.join(_diag)}")
+        elif _diag:
+            msg = "Stream URL bulunamadı — TÜM CLIENT'LAR: " + " ;; ".join(_diag)
+        else:
+            msg = (f"Stream URL bulunamadı — "
+                   f"{_last_err or 'hiçbir client format vermedi'}")
         status(msg)
         _record_fail(msg, video_id)
         on_set_live(status="error", message=msg, progress=0)

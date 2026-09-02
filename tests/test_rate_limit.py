@@ -82,6 +82,26 @@ check("tick None döndü (atlandı)", sonuc is None, sonuc)
 check("keşif HİÇ çağrılmadı", cagrildi["discover"] == 0, cagrildi)
 T.clear_rate_limit()
 
+print("\n[4b] ORTAM ENGELİ DENEME BÜTÇESİNİ HARCAMAMALI")
+# Hız sınırı videoyla ilgili değil. Sayaç kuyruğa alınırken artıyor; geri
+# alınmazsa birkaç saatlik IP engeli kuyruktaki HER videoyu kalıcı mahsur
+# bırakıyor (uretimde 71 kayit tam boyle strandledi).
+from models.database import mark_live_status, get_db, get_live_attempts   # noqa: E402
+with get_db() as _c:
+    _c.execute("""INSERT INTO live_seen (video_id,status,attempts,seen_at,title,url,channel_id)
+                  VALUES ('rl1','queued',2,'2026-09-01T07:00:00','t','u','ch')""")
+check("başlangıç deneme=2", get_live_attempts("rl1") == 2, get_live_attempts("rl1"))
+mark_live_status("rl1", "pending", error="Sign in to confirm you're not a bot",
+                 dec_attempt=True)
+check("hız sınırı → deneme geri alındı (1)", get_live_attempts("rl1") == 1,
+      get_live_attempts("rl1"))
+with get_db() as _c:
+    _r = dict(_c.execute("SELECT status FROM live_seen WHERE video_id='rl1'").fetchone())
+check("durum 'pending' (kuyruğa geri döner)", _r["status"] == "pending", _r)
+mark_live_status("rl1", "pending", dec_attempt=True)
+mark_live_status("rl1", "pending", dec_attempt=True)
+check("0'ın altına inmiyor", get_live_attempts("rl1") == 0, get_live_attempts("rl1"))
+
 print("\n[5] SOĞUMA BİTİNCE SERBEST")
 from models.database import kv_set                                 # noqa: E402
 kv_set(T._COOLDOWN_KEY, {"until": time.time() - 1, "streak": 3})   # süresi geçmiş

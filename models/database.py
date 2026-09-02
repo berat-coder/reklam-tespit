@@ -238,15 +238,30 @@ def get_live_attempts(video_id):
         return 0
 
 
-def mark_live_status(video_id, status, error="", inc_attempt=False):
+def mark_live_status(video_id, status, error="", inc_attempt=False,
+                     dec_attempt=False):
     """Bir canlı yayının durumunu güncelle (satır varsa).
-    status: pending|queued|done|failed|permanent. inc_attempt=True → deneme +1."""
+    status: pending|queued|done|failed|permanent. inc_attempt=True → deneme +1.
+
+    dec_attempt=True → deneme -1 (0'ın altına inmez). ORTAM kaynaklı engeller
+    (YouTube bot doğrulaması / 429) videonun deneme bütçesini harcamamalı:
+    sayaç kuyruğa alırken artıyor, ama engel videoyla ilgili değil. Geri
+    alınmazsa birkaç saatlik IP engeli kuyruktaki HER videoyu kalıcı olarak
+    mahsur bırakıyor."""
     if not video_id:
         return
     now = datetime.utcnow().isoformat()
     analyzed = 1 if status == "done" else 0
     with get_db() as conn:
-        if inc_attempt:
+        if dec_attempt:
+            conn.execute("""
+                UPDATE live_seen
+                SET status = ?, error = ?, last_attempt = ?,
+                    attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                    analyzed = ?
+                WHERE video_id = ?
+            """, (status, error or "", now, analyzed, video_id))
+        elif inc_attempt:
             conn.execute("""
                 UPDATE live_seen
                 SET status = ?, error = ?, last_attempt = ?,
