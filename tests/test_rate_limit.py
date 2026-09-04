@@ -22,6 +22,15 @@ os.environ["AUTO_SCAN_ENABLED"] = "0"
 
 import app as _a                                                   # noqa: E402,F401
 from services import tasks as T                                    # noqa: E402
+from models.database import kv_get as _kvg, kv_set as _kvs           # noqa: E402
+
+
+def kv_get_(k):
+    return _kvg(k, {}) or {}
+
+
+def kv_set_(k, v):
+    _kvs(k, v)
 
 ok = True
 
@@ -52,13 +61,57 @@ check("başlangıçta soğuma yok", T.yt_cooldown_remaining() == 0)
 w1 = T.note_rate_limit()
 check(f"1. flag → {w1} sn", w1 == T.YT_COOLDOWN_BASE, w1)
 check("soğuma başladı", T.yt_cooldown_remaining() > 0, T.yt_cooldown_remaining())
-w2 = T.note_rate_limit()
+# Tırmanma yalnız soğuma BİTTİKTEN sonra gelen yeni flag'te olur.
+def _flag_sonrasi():
+    """Soğumayı bitmiş say (until=0) ama seriyi ve son flag'i koru."""
+    st = kv_get_(T._COOLDOWN_KEY)
+    st["until"] = 0
+    st["last_flag"] = time.time()      # yakın → sönme devreye girmesin
+    kv_set_(T._COOLDOWN_KEY, st)
+    return T.note_rate_limit()
+
+
+w2 = _flag_sonrasi()
 check(f"2. flag → iki katı ({w2} sn)", w2 == T.YT_COOLDOWN_BASE * 2, w2)
-w3 = T.note_rate_limit()
-check(f"3. flag → dört katı ({w3} sn)", w3 == T.YT_COOLDOWN_BASE * 4, w3)
+w3 = _flag_sonrasi()
+# Beklenti TAVANA göre yazılmalı: taban 600 sn ve tavan 1800 sn ise
+# 3. flag'in "dört katı" (2400) zaten kırpılır.
+check(f"3. flag → tavana kırpılmış katlanma ({w3} sn)",
+      w3 == min(T.YT_COOLDOWN_MAX, T.YT_COOLDOWN_BASE * 4), w3)
 for _ in range(12):
-    son = T.note_rate_limit()
+    son = _flag_sonrasi()
 check(f"tavan aşılmıyor ({son} sn)", son == T.YT_COOLDOWN_MAX, son)
+
+print("\n[2b] MANDAL KIRILDI: aynı engel bir kez tırmanır")
+T.clear_rate_limit()
+w1 = T.note_rate_limit()
+w_ayni = T.note_rate_limit()          # soğuma HÂLÂ aktifken ikinci flag
+check("soğuma aktifken seri artmadı", w_ayni <= w1, (w1, w_ayni))
+st = kv_get_(T._COOLDOWN_KEY)
+check("seri 1'de kaldı (14'e tırmanmıyor)", st.get("streak") == 1, st)
+for _ in range(6):
+    T.note_rate_limit()               # üst üste altı belirti daha
+st = kv_get_(T._COOLDOWN_KEY)
+check("altı belirti sonrası seri hâlâ 1", st.get("streak") == 1, st)
+
+print("\n[2c] ZAMANLA SÖNME: uzun temiz aradan sonra seri sıfırlanır")
+# son flag'i çok eskiye al → sönme devreye girmeli
+kv_set_(T._COOLDOWN_KEY, {"until": 0, "streak": 5,
+                          "last_flag": time.time() - 10 * 3600,
+                          "wait": T.YT_COOLDOWN_BASE})
+w = T.note_rate_limit()
+check(f"seri sıfırlandı → taban bekleme ({w} sn)", w == T.YT_COOLDOWN_BASE, w)
+# yakın zamanda flag varsa sönme OLMAZ
+kv_set_(T._COOLDOWN_KEY, {"until": 0, "streak": 2,
+                          "last_flag": time.time() - 30,
+                          "wait": T.YT_COOLDOWN_BASE})
+w = T.note_rate_limit()
+check(f"yeni flag → tırmanma sürüyor ({w} sn)",
+      w == min(T.YT_COOLDOWN_MAX, T.YT_COOLDOWN_BASE * 4), w)
+
+print("\n[2d] TAVAN 30 DAKİKA (saatlerce durmak veri kaçırmak demek)")
+check(f"tavan {T.YT_COOLDOWN_MAX} sn = 30 dk", T.YT_COOLDOWN_MAX == 1800,
+      T.YT_COOLDOWN_MAX)
 
 print("\n[3] BAŞARI SONRASI SIFIRLAMA")
 T.clear_rate_limit()

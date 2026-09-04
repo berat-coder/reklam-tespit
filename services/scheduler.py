@@ -15,6 +15,7 @@ Her tick:
      (günlük üst sınır `daily_cap`; sayaç TR takvim gününe göre sıfırlanır)
 """
 
+import os
 import time
 import threading
 from datetime import datetime, timedelta
@@ -403,7 +404,16 @@ def get_status():
 
 
 def start_scheduler():
+    """Otomatik tarama döngüsünü başlat.
+
+    AUTO_SCAN_ENABLED=0 ile TAMAMEN kapatılabilir. Bu kapı yoktu: app'i import
+    eden her script (test, bakım betiği, göç) bir zamanlayıcı thread'i
+    başlatıyor, o da YouTube'a kanal keşfi isteği atıp live_seen'i buduyordu.
+    Testlerde bu, eklenen satırların arka planda SİLİNMESİNE yol açıyordu."""
     global _started
+    if os.environ.get("AUTO_SCAN_ENABLED", "1").strip() in ("0", "false", "False"):
+        print("[OTO-TARAMA] AUTO_SCAN_ENABLED=0 — zamanlayıcı başlatılmadı")
+        return
     with _lock:
         if _started:
             return

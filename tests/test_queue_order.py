@@ -39,6 +39,16 @@ def check(name, cond, extra=""):
         ok = False
 
 
+_NOW = __import__("datetime").datetime.utcnow()
+
+
+def _saat_once(h):
+    """Şimdiden h saat önce (ISO). Sabit tarih YAZMA: prune_live_seen
+    'failed' kaydı 7 günden, 'pending' kaydı 72 saatten sonra siliyor —
+    sabit tarihler takvim ilerledikçe eşiğin dışına düşüp testi bozuyordu."""
+    return (_NOW - __import__("datetime").timedelta(hours=h)).isoformat()
+
+
 def ekle(vid, status, attempts, seen_at, last_attempt=None):
     with get_db() as c:
         c.execute("""INSERT INTO live_seen (video_id, status, attempts, seen_at,
@@ -48,8 +58,8 @@ def ekle(vid, status, attempts, seen_at, last_attempt=None):
 
 
 print("\n[1] TAZE 'pending' ESKİ 'failed' RETRY'SİNİN ÖNÜNDE OLMALI")
-ekle("eski_failed", "failed", 1, "2026-08-27T10:00:00", "2026-08-27T10:00:00")
-ekle("taze_pending", "pending", 0, "2026-09-01T07:00:00")
+ekle("eski_failed", "failed", 1, _saat_once(48), _saat_once(48))
+ekle("taze_pending", "pending", 0, _saat_once(1))
 r = next_pending_live()
 check("pending seçildi (eski failed değil)", r and r["video_id"] == "taze_pending",
       r and r["video_id"])
@@ -62,8 +72,8 @@ check("şimdi eski failed seçildi", r and r["video_id"] == "eski_failed",
       r and r["video_id"])
 
 print("\n[3] pending GRUBU İÇİNDE FIFO korunur (eski bekleyen aç kalmasın)")
-ekle("pending_eski", "pending", 0, "2026-08-28T10:00:00")
-ekle("pending_yeni", "pending", 0, "2026-09-01T08:00:00")
+ekle("pending_eski", "pending", 0, _saat_once(60))
+ekle("pending_yeni", "pending", 0, _saat_once(1))
 r = next_pending_live()
 check("iki pending'den ESKİ olan seçildi", r and r["video_id"] == "pending_eski",
       r and r["video_id"])
@@ -71,7 +81,7 @@ check("iki pending'den ESKİ olan seçildi", r and r["video_id"] == "pending_esk
 print("\n[4] DENEME TAVANI: attempts >= max olan failed alınmaz")
 with get_db() as c:
     c.execute("DELETE FROM live_seen")
-ekle("tavan_asan", "failed", 4, "2026-08-27T10:00:00", "2026-08-27T10:00:00")
+ekle("tavan_asan", "failed", 4, _saat_once(48), _saat_once(48))
 check("attempts=4, max=4 → alınmaz", next_pending_live() is None)
 with get_db() as c:
     c.execute("UPDATE live_seen SET attempts=3 WHERE video_id='tavan_asan'")

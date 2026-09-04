@@ -216,7 +216,7 @@ def _cd_env(name, default):
 
 
 YT_COOLDOWN_BASE = _cd_env("YT_COOLDOWN_BASE_SEC", 600)      # ilk bekleme 10 dk
-YT_COOLDOWN_MAX = _cd_env("YT_COOLDOWN_MAX_SEC", 7200)       # tavan 2 saat
+YT_COOLDOWN_MAX = _cd_env("YT_COOLDOWN_MAX_SEC", 1800)       # tavan 30 dk
 
 
 def is_rate_limit_msg(msg):
@@ -234,15 +234,43 @@ def yt_cooldown_remaining():
 
 
 def note_rate_limit():
-    """Bot-flag/429 görüldü → üstel geri çekilme başlat. Döner: bekleme (sn)."""
+    """Bot-flag/429 görüldü → üstel geri çekilme. Döner: bekleme (sn).
+
+    ÜÇ KORUMA (ilk sürüm bunlar olmadan tavana çakılıyordu — üretimde seri 14'e
+    tırmandı, 118 dk boşta beklerken 9 video sırada kaldı ve 3 saat hiç analiz
+    yapılmadı):
+
+    1) AYNI ENGEL BİR KEZ TIRMANIR. Soğuma HÂLÂ aktifken gelen yeni flag seriyi
+       artırmaz — kuyrukta biriken işler aynı engeli 14 kez sayıyordu.
+    2) ZAMANLA SÖNME. Son flag'ten bu yana son beklemenin 2 katı kadar süre
+       geçmişse seri sıfırlanır. Eskiden seri YALNIZ başarıyla sıfırlanıyordu,
+       ama 2 saat boşta beklerken başarı da imkânsızdı → tek yönlü mandal.
+    3) MAKUL TAVAN. Engel aralıklı (aynı gün 36 analiz tamamlandı), o yüzden
+       tavan 30 dk. Saatlerce durmak veriyi kaçırmaktan başka işe yaramıyor."""
+    now = time.time()
     try:
         st = kv_get(_COOLDOWN_KEY, {}) or {}
-        streak = int(st.get("streak") or 0) + 1
     except Exception:
-        streak = 1
+        st = {}
+    kalan = max(0.0, float(st.get("until") or 0) - now)
+    streak = int(st.get("streak") or 0)
+
+    if kalan > 0:
+        # Zaten soğumadayız: aynı engelin başka bir belirtisi. Tırmandırma.
+        print(f"[VIDEO] YouTube hız sınırı (aynı engel) — mevcut soğuma "
+              f"{int(kalan) // 60} dk sürüyor, seri artırılmadı")
+        return int(kalan)
+
+    son = float(st.get("last_flag") or 0)
+    onceki_bekleme = float(st.get("wait") or YT_COOLDOWN_BASE)
+    if son and (now - son) > (2 * onceki_bekleme):
+        streak = 0          # uzun süre temiz geçti → sıfırdan başla
+
+    streak += 1
     wait = min(YT_COOLDOWN_MAX, YT_COOLDOWN_BASE * (2 ** (streak - 1)))
     try:
-        kv_set(_COOLDOWN_KEY, {"until": time.time() + wait, "streak": streak})
+        kv_set(_COOLDOWN_KEY, {"until": now + wait, "streak": streak,
+                               "last_flag": now, "wait": wait})
     except Exception:
         pass
     print(f"[VIDEO] YouTube hız sınırı ({streak}. kez) — {wait // 60} dk "
@@ -254,7 +282,8 @@ def clear_rate_limit():
     """Başarılı çekimden sonra geri çekilmeyi sıfırla."""
     try:
         if (kv_get(_COOLDOWN_KEY, {}) or {}).get("streak"):
-            kv_set(_COOLDOWN_KEY, {"until": 0, "streak": 0})
+            kv_set(_COOLDOWN_KEY, {"until": 0, "streak": 0,
+                                   "last_flag": 0, "wait": YT_COOLDOWN_BASE})
     except Exception:
         pass
 
@@ -987,6 +1016,20 @@ def _analyze_video_core(
             self.msgs.append(str(m))
         def error(self, m):
             self.msgs.append(str(m))
+
+    # SOĞUMA SIRASINDA HİÇ İSTEK ATMA. Zamanlayıcı soğumada yeni iş kuyruğa
+    # almıyor ama KUYRUKTA BEKLEYEN işler (ve panelden 'Tekrar analiz et')
+    # yine de buraya geliyordu; her biri YouTube'a istek atıp engeli
+    # besliyordu. Kayıt 'pending' bırakılır, deneme bütçesi harcanmaz.
+    _cd = yt_cooldown_remaining()
+    if _cd > 0:
+        msg = (f"YouTube hız sınırı — {_cd // 60} dk {_cd % 60} sn soğuma "
+               f"sürüyor, bu video sıradaki turda denenecek")
+        status(msg)
+        if vid_guess:
+            mark_live_status(vid_guess, "pending", error=msg, dec_attempt=True)
+        on_set_live(status="error", message=msg, progress=0)
+        return
 
     stream_url = None
     sheaders = None
