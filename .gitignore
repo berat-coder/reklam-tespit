@@ -8,6 +8,8 @@ venv/
 
 # Veri
 data.db
+data.db-shm
+data.db-wal
 data.json
 frames/
 config.json
