@@ -206,7 +206,10 @@ def _log_seek_error(raw):
 # kalan 6 client'ı da deniyor (hepsi aynı cevabı alıyor) ve sıradaki videoya
 # geçip yine 7 istek atıyordu. Logda 4 dakikada 3 video × 7 = 21 işaretli istek.
 _RATE_PAT = re.compile(
-    r"sign in to confirm|not a bot|http error 429|too many requests", re.I)
+    r"sign in to confirm|not a bot|http error 429|too many requests"
+    # Kendi ürettiğimiz Türkçe mesaj da tanınmalı: client döngüsü İngilizce
+    # uyarıyı Türkçeye çevirip aşağı aktarıyor.
+    r"|hız sınırı|bot sayıldı", re.I)
 _COOLDOWN_KEY = "yt_rate_limit"
 def _cd_env(name, default):
     try:
@@ -812,8 +815,14 @@ def _analyze_video_core(
     vid_guess = _vid_from_url(url)
     label_box = [url]   # title öğrenilince güncellenir (log etiketi)
 
-    def _record_fail(err, vid=None):
-        """Hatayı logla + (canlı yayınsa) live_seen durumunu güncelle."""
+    def _record_fail(err, vid=None, rate_limited=False):
+        """Hatayı logla + (canlı yayınsa) live_seen durumunu güncelle.
+
+        rate_limited: çağıran BİLİYORSA açıkça verir. Metin eşlemesine
+        güvenmek hataya açıktı: client döngüsü İngilizce bot-flag'i yakalayıp
+        mesajı TÜRKÇEYE çeviriyor, sonra buradaki is_rate_limit_msg o Türkçe
+        metni tanımıyordu → kayıt 'failed' yazılıp deneme bütçesi harcanıyordu
+        (üretimde tam böyle oldu)."""
         code, kind = _classify_error(str(err))
         log_event("video", label_box[0], "error", code, str(err))
         target = vid or vid_guess
@@ -821,7 +830,7 @@ def _analyze_video_core(
         # videoyla ilgili değil; sayaç kuyruğa alınırken artıyor ve geri
         # alınmazsa birkaç saatlik IP engeli kuyruktaki HER videoyu kalıcı
         # mahsur bırakıyor. 'pending' kalır → soğuma bitince yeniden denenir.
-        if target and is_rate_limit_msg(str(err)):
+        if target and (rate_limited or is_rate_limit_msg(str(err))):
             mark_live_status(target, "pending", error=str(err), dec_attempt=True)
             return
         if target:
@@ -1157,7 +1166,7 @@ def _analyze_video_core(
             msg = (f"Stream URL bulunamadı — "
                    f"{_last_err or 'hiçbir client format vermedi'}")
         status(msg)
-        _record_fail(msg, video_id)
+        _record_fail(msg, video_id, rate_limited=bool(_rl[0]))
         on_set_live(status="error", message=msg, progress=0)
         return
 

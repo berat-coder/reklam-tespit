@@ -55,6 +55,17 @@ for m, bekle in [
 ]:
     check(f"{'HIZ' if bekle else 'normal'}: {str(m)[:40]}", T.is_rate_limit_msg(m) is bekle)
 
+print("\n[1b] KENDİ TÜRKÇE MESAJIMIZ DA TANINMALI")
+# Client döngüsü İngilizce bot-flag'i yakalayıp mesajı TÜRKÇEYE çeviriyor ve
+# aşağı aktarıyor. Dedektör yalnız İngilizce metni tanıdığı için _record_fail
+# kaydı 'failed' yazıp deneme bütçesini harcıyordu (üretimde tam böyle oldu).
+check("'hız sınırı' tanınıyor",
+      T.is_rate_limit_msg("YouTube hız sınırı — 10 dk sonra denenecek"))
+check("'bot sayıldı' tanınıyor",
+      T.is_rate_limit_msg("IP geçici olarak bot sayıldı"))
+check("normal Türkçe hata yanlış eşleşmiyor",
+      not T.is_rate_limit_msg("Frame çıkarılamadı — ffmpeg: 403 Forbidden"))
+
 print("\n[2] ÜSTEL GERİ ÇEKİLME")
 T.clear_rate_limit()
 check("başlangıçta soğuma yok", T.yt_cooldown_remaining() == 0)
