@@ -1056,8 +1056,17 @@ def _analyze_video_core(
     #   tv → bu sürümde her koşulda "The page needs to be reloaded" veriyor
     # NOT: "tv_embedded" bu yt-dlp sürümünün INNERTUBE_CLIENTS'ında YOK — ölü
     # kayıttı, boşa bir tur döndürüyordu; çıkarıldı.
-    for _clients in (["web_safari"], ["mweb"], ["tv_simply"], ["web"],
-                     ["ios"], ["tv"], ["android_vr"]):
+    # visionos ÖNCE: yt-dlp 2026.8.19'un KENDİ varsayılan client'ı
+    # (_DEFAULT_CLIENTS = ('visionos', 'web')) ama bu listede HİÇ YOKTU.
+    # AYNI ANDA, AYNI BAĞLANTIDAN ölçüldü (1rejCALQRTk):
+    #   visionos   → 50 format, 18 DASH video, 1080p/720p/480p/360p/240p/144p
+    #   tv_simply  →  5 format,  1 DASH video, YALNIZ 360p
+    #   web_safari →  4 format,  0 DASH video (listede İLK sıradaydı!)
+    # Yani hedef 1080p (SOURCE_MIN_HEIGHT) iken sistem 360p'ye düşüyordu ya da
+    # hiç format bulamıyordu — köşe logolarının marka yazısının okunamamasının
+    # ("Migros Hemen" → "n11" tipi yanlış okuma) sebebi de bu.
+    for _clients in (["visionos"], ["web_safari"], ["mweb"], ["tv_simply"],
+                     ["web"], ["ios"], ["tv"], ["android_vr"]):
         cname = _clients[0]
         log = _YdlLog()
         try:
